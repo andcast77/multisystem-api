@@ -1,0 +1,39 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- S�mbolo de flujo: Flecha curva integrada con l�neas de productos -->
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6366F1;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Flecha curva principal que representa flujo -->
+  <path d="M 100 256 Q 200 150, 300 200 T 412 256" 
+        fill="none" 
+        stroke="url(#logoGradient)" 
+        stroke-width="24" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+  
+  <!-- Punta de flecha -->
+  <path d="M 380 240 L 412 256 L 380 272 Z" 
+        fill="url(#logoGradient)"/>
+  
+  <!-- L�neas horizontales que representan productos/transacciones -->
+  <line x1="120" y1="200" x2="180" y2="200" 
+        stroke="url(#logoGradient)" 
+        stroke-width="12" 
+        stroke-linecap="round"/>
+  <line x1="120" y1="240" x2="200" y2="240" 
+        stroke="url(#logoGradient)" 
+        stroke-width="12" 
+        stroke-linecap="round"/>
+  <line x1="120" y1="280" x2="220" y2="280" 
+        stroke="url(#logoGradient)" 
+        stroke-width="12" 
+        stroke-linecap="round"/>
+  <line x1="120" y1="320" x2="240" y2="320" 
+        stroke="url(#logoGradient)" 
+        stroke-width="12" 
+        stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,402 @@
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { cn } from '@/lib/utils'
+import { useModuleAccess } from '@/hooks/usePermissions'
+import { useUser } from '@/hooks/useUser'
+import { Module } from '@/lib/permissions'
+import {
+  LayoutDashboard,
+  ShoppingCart,
+  Gift,
+  Menu,
+  X,
+  LogOut,
+  Store,
+  Package,
+  Users,
+  Warehouse,
+  Truck,
+  UserCog,
+  Settings,
+  HardDrive,
+  BarChart,
+  Tags,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+
+interface NavItem {
+  title: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+  module?: Module
+  badge?: string
+}
+
+interface NavGroup {
+  title: string
+  items: NavItem[]
+}
+
+// Navigation groups - Only add routes that actually exist!
+// See docs/guides/04-routes-organization.md for instructions on adding new routes
+const navGroups: NavGroup[] = [
+  {
+    title: 'Principal',
+    items: [
+      {
+        title: 'Dashboard',
+        href: '/dashboard',
+        icon: LayoutDashboard,
+        // No module = always visible
+      },
+      {
+        title: 'Punto de Venta',
+        href: '/pos',
+        icon: ShoppingCart,
+        module: Module.SALES,
+      },
+    ],
+  },
+  {
+    title: 'Gestión',
+    items: [
+      {
+        title: 'Productos',
+        href: '/products',
+        icon: Package,
+        module: Module.PRODUCTS,
+      },
+      {
+        title: 'Categorías',
+        href: '/categories',
+        icon: Tags,
+        module: Module.CATEGORIES,
+      },
+      {
+        title: 'Inventario',
+        href: '/inventory',
+        icon: Warehouse,
+        module: Module.INVENTORY,
+      },
+      {
+        title: 'Reportes',
+        href: '/reports',
+        icon: BarChart,
+        module: Module.REPORTS,
+      },
+    ],
+  },
+  {
+    title: 'Administración',
+    items: [
+      {
+        title: 'Clientes',
+        href: '/customers',
+        icon: Users,
+        module: Module.CUSTOMERS,
+      },
+      {
+        title: 'Proveedores',
+        href: '/suppliers',
+        icon: Truck,
+        module: Module.SUPPLIERS,
+      },
+      {
+        title: 'Usuarios',
+        href: '/admin/users',
+        icon: UserCog,
+        module: Module.USERS,
+      },
+      {
+        title: 'Configuración',
+        href: '/admin/settings',
+        icon: Settings,
+        module: Module.STORE_CONFIG,
+      },
+      {
+        title: 'Lealtad',
+        href: '/admin/loyalty',
+        icon: Gift,
+        module: Module.LOYALTY,
+      },
+    ],
+  },
+  {
+    title: 'Avanzado',
+    items: [
+      {
+        title: 'Copias de Seguridad',
+        href: '/admin/backup',
+        icon: HardDrive,
+        module: Module.STORE_CONFIG,
+      },
+    ],
+  },
+]
+
+// Component for individual nav item with permission check
+function NavItemComponent({ item, pathname, onNavigate }: { 
+  item: NavItem
+  pathname: string
+  onNavigate: () => void
+}) {
+  // Always call hooks unconditionally (React rules)
+  // Use a default module (REPORTS) when no module is specified
+  // Reports access is typically granted to most users, but we'll check it anyway
+  const moduleToCheck = item.module ?? Module.REPORTS
+  const moduleAccess = useModuleAccess(moduleToCheck)
+  // If no module is specified, item is always visible (we use REPORTS as default but ignore result)
+  const hasAccess = item.module ? moduleAccess : true
+
+  if (!hasAccess) {
+    return null
+  }
+
+  const Icon = item.icon
+  const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      aria-current={isActive ? 'page' : undefined}
+      className={cn(
+        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-200',
+        'hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2',
+        isActive
+          ? 'bg-gray-100 text-gray-900 font-semibold'
+          : 'text-gray-600 hover:text-gray-900'
+      )}
+    >
+      <Icon className={cn(
+        'h-5 w-5 flex-shrink-0',
+        isActive ? 'text-gray-900' : 'text-gray-500'
+      )} />
+      <span>{item.title}</span>
+      {item.badge && (
+        <span className="ml-auto rounded-full bg-red-500 px-2 py-0.5 text-xs font-semibold text-white">
+          {item.badge}
+        </span>
+      )}
+    </Link>
+  )
+}
+
+// Component for navigation group
+function NavGroupComponent({ group, pathname, onNavigate }: {
+  group: NavGroup
+  pathname: string
+  onNavigate: () => void
+}) {
+  // Filter items by permissions
+  const visibleItems = group.items.filter((item) => {
+    if (!item.module) return true
+    const moduleToCheck = item.module ?? Module.REPORTS
+    const moduleAccess = useModuleAccess(moduleToCheck)
+    return item.module ? moduleAccess : true
+  })
+
+  // Don't render group if no items are visible
+  if (visibleItems.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="px-3 py-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+          {group.title}
+        </h3>
+      </div>
+      <div className="space-y-1">
+        {visibleItems.map((item) => (
+          <NavItemComponent
+            key={item.href}
+            item={item}
+            pathname={pathname}
+            onNavigate={onNavigate}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Component for user avatar
+function UserAvatar({ name }: { name: string }) {
+  const initials = name
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
+
+  return (
+    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-semibold text-sm">
+      {initials}
+    </div>
+  )
+}
+
+// Component for role badge
+function RoleBadge({ role }: { role: string }) {
+  const roleColors: Record<string, { bg: string; text: string }> = {
+    ADMIN: { bg: 'bg-blue-100', text: 'text-blue-800' },
+    SUPERVISOR: { bg: 'bg-green-100', text: 'text-green-800' },
+    CASHIER: { bg: 'bg-gray-100', text: 'text-gray-800' },
+  }
+
+  const colors = roleColors[role] || roleColors.CASHIER
+
+  return (
+    <Badge variant="outline" className={cn('text-xs', colors.bg, colors.text)}>
+      {role.charAt(0) + role.slice(1).toLowerCase()}
+    </Badge>
+  )
+}
+
+export function Sidebar() {
+  const pathname = usePathname()
+  const [isMobileOpen, setIsMobileOpen] = useState(false)
+  const { data: user, isLoading: isLoadingUser } = useUser()
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch (error) {
+      console.error('Logout error:', error)
+    } finally {
+      // Clear offline auth even if API call fails
+      if (typeof window !== 'undefined') {
+        const { clearOfflineAuth } = await import('@/lib/services/offlineAuth')
+        clearOfflineAuth()
+      }
+      window.location.href = '/login'
+    }
+  }
+
+  const handleMobileClose = () => {
+    setIsMobileOpen(false)
+  }
+
+  return (
+    <>
+      {/* Mobile menu button */}
+      <div className="lg:hidden fixed top-4 left-4 z-50">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => setIsMobileOpen(!isMobileOpen)}
+          aria-label={isMobileOpen ? 'Cerrar menú' : 'Abrir menú'}
+          aria-expanded={isMobileOpen}
+          className="h-10 w-10 touch-manipulation"
+        >
+          {isMobileOpen ? (
+            <X className="h-5 w-5" />
+          ) : (
+            <Menu className="h-5 w-5" />
+          )}
+        </Button>
+      </div>
+
+      {/* Mobile overlay */}
+      {isMobileOpen && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm transition-opacity duration-300 ease-in-out"
+          onClick={handleMobileClose}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              handleMobileClose()
+            }
+          }}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          'fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-200 bg-white shadow-lg',
+          'transition-transform duration-300 ease-in-out',
+          'lg:translate-x-0 lg:shadow-none',
+          isMobileOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+        aria-label="Navegación principal"
+        role="navigation"
+      >
+        <div className="flex h-full flex-col">
+          {/* Header */}
+          <div className="flex h-16 items-center gap-3 border-b border-gray-200 px-6">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Store className="h-5 w-5" />
+            </div>
+            <div className="flex-1">
+              <h1 className="text-xl font-bold text-gray-900">ShopFlow POS</h1>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <ScrollArea className="flex-1">
+            <nav className="p-4 space-y-4" aria-label="Navegación principal">
+              {navGroups.map((group, groupIndex) => (
+                <div key={group.title}>
+                  <NavGroupComponent
+                    group={group}
+                    pathname={pathname}
+                    onNavigate={handleMobileClose}
+                  />
+                  {groupIndex < navGroups.length - 1 && (
+                    <Separator className="my-4" />
+                  )}
+                </div>
+              ))}
+            </nav>
+          </ScrollArea>
+
+          {/* Footer */}
+          <div className="border-t border-gray-200 p-4">
+            {isLoadingUser ? (
+              <div className="flex items-center gap-3 px-3 py-2">
+                <div className="h-10 w-10 animate-pulse rounded-full bg-gray-200" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-24 animate-pulse rounded bg-gray-200" />
+                  <div className="h-3 w-16 animate-pulse rounded bg-gray-200" />
+                </div>
+              </div>
+            ) : user ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 px-3 py-2">
+                  <UserAvatar name={user.name} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {user.name}
+                    </p>
+                    <div className="mt-1">
+                      <RoleBadge role={user.role} />
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-3 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                  onClick={handleLogout}
+                  aria-label="Cerrar sesión"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span>Cerrar Sesión</span>
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </aside>
+    </>
+  )
+}
+

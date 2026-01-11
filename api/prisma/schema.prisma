@@ -1,0 +1,897 @@
+// Prisma Schema para MultiSystem API
+// Base de datos única compartida entre todos los módulos
+// Modelos unificados: User, Notification, Category
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ========================================
+// ENUMS
+// ========================================
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+enum SalaryType {
+  hour
+  day
+  week
+  biweek
+  month
+}
+
+enum OvertimeType {
+  multiplier
+  fixed
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum PayrollStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LicenseType {
+  VACATION
+  SICK_LEAVE
+  PERSONAL_LEAVE
+  UNPAID_LEAVE
+  OTHER
+}
+
+enum LicenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  INFO
+  WARNING
+  ERROR
+  SUCCESS
+  LOW_STOCK
+  IMPORTANT_SALE
+  PENDING_TASK
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+enum SaleStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  CHECK
+  OTHER
+}
+
+enum TransferStatus {
+  PENDING
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
+}
+
+enum LoyaltyPointType {
+  EARNED
+  REDEEMED
+  EXPIRED
+  ADJUSTED
+}
+
+enum ActionType {
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  LOGIN
+  LOGOUT
+  EXPORT
+  IMPORT
+  PRINT
+}
+
+enum EntityType {
+  PRODUCT
+  CATEGORY
+  SUPPLIER
+  CUSTOMER
+  SALE
+  USER
+  STORE_CONFIG
+  TICKET_CONFIG
+  INVENTORY_TRANSFER
+}
+
+enum TicketType {
+  TICKET
+  INVOICE
+  RECEIPT
+}
+
+// ========================================
+// AUTENTICACIÓN Y USUARIOS (UNIFICADO)
+// ========================================
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  password        String
+  firstName       String?
+  lastName        String?
+  phone           String?
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret String?
+  role            UserRole @default(USER)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relaciones Workify
+  roleAssignments UserRoleAssignment[] @relation("UserRoleAssignments")
+  permissions     UserPermission[]
+  employees       Employee[]
+  
+  // Relaciones ShopFlow
+  sales           Sale[]
+  actionHistory   ActionHistory[]
+  notifications   Notification[]
+  userPreferences UserPreferences?
+  notificationPreferences NotificationPreference?
+  inventoryTransfers InventoryTransfer[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+// ========================================
+// MÓDULO WORKIFY (Gestión de Trabajo)
+// ========================================
+
+model Company {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  parentId    String?
+  email       String?
+  phone       String?
+  address     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones jerárquicas
+  parent      Company?  @relation("CompanyHierarchy", fields: [parentId], references: [id])
+  children    Company[] @relation("CompanyHierarchy")
+
+  // Relaciones
+  departments Department[]
+  roles       Role[]
+  employees   Employee[]
+  positions   Position[]
+  payrolls    Payroll[]
+  documents   Document[]
+  reports     Report[]
+  auditLogs   AuditLog[]
+  holidays    Holidays[]
+  licensePolicies LicensePolicy[]
+  workShifts  WorkShift[]
+  timeEntries TimeEntry[]
+  notifications Notification[]
+  userRoleAssignments UserRoleAssignment[]
+  integrationLogs IntegrationLog[]
+
+  @@map("companies")
+}
+
+model Department {
+  id          String    @id @default(uuid())
+  companyId   String
+  name        String
+  parentId    String?
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones jerárquicas
+  parent      Department? @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children    Department[] @relation("DepartmentHierarchy")
+
+  // Relaciones
+  company     Company   @relation(fields: [companyId], references: [id])
+  employees   Employee[]
+
+  @@map("departments")
+}
+
+model Position {
+  id                String      @id @default(uuid())
+  companyId         String
+  name              String
+  description       String?
+  salaryAmount      Decimal     @db.Decimal(10, 2)
+  salaryType        SalaryType
+  overtimeEligible  Boolean     @default(false)
+  overtimeType      OvertimeType?
+  overtimeValue      Decimal?    @db.Decimal(10, 2)
+  annualVacationDays Int?
+  hasAguinaldo      Boolean     @default(false)
+  monthlyBonus      Decimal?    @db.Decimal(10, 2)
+  level             String?
+  isActive          Boolean     @default(true)
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  // Relaciones
+  company           Company     @relation(fields: [companyId], references: [id])
+  employees         Employee[]
+
+  @@map("positions")
+}
+
+model Role {
+  id          String    @id @default(uuid())
+  companyId   String
+  name        String
+  parentId    String?
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones jerárquicas
+  parent      Role?     @relation("RoleHierarchy", fields: [parentId], references: [id])
+  children    Role[]    @relation("RoleHierarchy")
+
+  // Relaciones
+  company     Company   @relation(fields: [companyId], references: [id])
+  userRoleAssignments UserRoleAssignment[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  resource    String
+  action      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  userPermissions UserPermission[]
+
+  @@map("permissions")
+}
+
+model UserRoleAssignment {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  companyId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  user      User     @relation("UserRoleAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, companyId])
+  @@map("user_roles")
+}
+
+model UserPermission {
+  id           String   @id @default(uuid())
+  userId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relaciones
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission    Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionId])
+  @@map("user_permissions")
+}
+
+model Employee {
+  id                    String         @id @default(uuid())
+  companyId             String
+  departmentId          String?
+  positionId            String?
+  userId                String?
+  firstName             String
+  lastName              String
+  email                 String?
+  phone                 String?
+  idNumber              String?
+  birthDate             DateTime?
+  gender                Gender?
+  dateJoined            DateTime?
+  customSalaryAmount    Decimal?      @db.Decimal(10, 2)
+  customSalaryType      SalaryType?
+  customOvertimeEligible Boolean?     @default(false)
+  status                EmployeeStatus @default(ACTIVE)
+  isDeleted             Boolean        @default(false)
+  deletedAt             DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  // Relaciones
+  company               Company        @relation(fields: [companyId], references: [id])
+  department            Department?    @relation(fields: [departmentId], references: [id])
+  position              Position?      @relation(fields: [positionId], references: [id])
+  user                  User?          @relation(fields: [userId], references: [id])
+  timeEntries           TimeEntry[]
+  payrolls              Payroll[]
+  licenses              License[]
+  documents             Document[]
+  schedules             Schedule[]
+  specialDayAssignments SpecialDayAssignment[]
+
+  @@map("employees")
+}
+
+model TimeEntry {
+  id          String    @id @default(uuid())
+  employeeId  String
+  companyId   String
+  date        DateTime  @db.Date
+  clockIn     DateTime?
+  clockOut    DateTime?
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("time_entries")
+}
+
+model WorkShift {
+  id          String    @id @default(uuid())
+  companyId   String
+  name        String
+  startTime   String    // Formato HH:mm
+  endTime     String    // Formato HH:mm
+  breakDuration Int?    // Minutos
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  company     Company   @relation(fields: [companyId], references: [id])
+  schedules   Schedule[]
+  specialDayAssignments SpecialDayAssignment[]
+
+  @@map("work_shifts")
+}
+
+model Schedule {
+  id          String    @id @default(uuid())
+  employeeId  String
+  workShiftId String?
+  dayOfWeek   Int       // 0 = Domingo, 6 = Sábado
+  startTime   String?   // Formato HH:mm
+  endTime     String?   // Formato HH:mm
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  workShift   WorkShift? @relation(fields: [workShiftId], references: [id])
+
+  @@map("schedules")
+}
+
+model SpecialDayAssignment {
+  id          String    @id @default(uuid())
+  employeeId  String
+  date        DateTime  @db.Date
+  workShiftId String?
+  startTime   String?   // Formato HH:mm
+  endTime     String?   // Formato HH:mm
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  workShift   WorkShift? @relation(fields: [workShiftId], references: [id])
+
+  @@map("special_day_assignments")
+}
+
+model Holidays {
+  id          String    @id @default(uuid())
+  companyId   String
+  name        String
+  date        DateTime  @db.Date
+  isRecurring Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones
+  company     Company   @relation(fields: [companyId], references: [id])
+
+  @@map("holidays")
+}
+
+model Payroll {
+  id          String        @id @default(uuid())
+  employeeId  String
+  companyId   String
+  periodStart DateTime      @db.Date
+  periodEnd   DateTime      @db.Date
+  grossSalary Decimal       @db.Decimal(10, 2)
+  deductions  Decimal       @db.Decimal(10, 2) @default(0)
+  netSalary   Decimal       @db.Decimal(10, 2)
+  status      PayrollStatus @default(PENDING)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relaciones
+  employee    Employee      @relation(fields: [employeeId], references: [id])
+  company     Company       @relation(fields: [companyId], references: [id])
+
+  @@map("payrolls")
+}
+
+model PayrollRule {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  description String?
+  ruleType    String   // "deduction", "bonus", "tax", etc.
+  value       Decimal  @db.Decimal(10, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("payroll_rules")
+}
+
+model License {
+  id          String        @id @default(uuid())
+  employeeId  String
+  type        LicenseType
+  startDate   DateTime      @db.Date
+  endDate     DateTime      @db.Date
+  status      LicenseStatus  @default(PENDING)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relaciones
+  employee    Employee      @relation(fields: [employeeId], references: [id])
+
+  @@map("licenses")
+}
+
+model LicensePolicy {
+  id          String      @id @default(uuid())
+  companyId   String
+  type        LicenseType
+  maxDays     Int
+  isPaid      Boolean     @default(true)
+  requirements String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relaciones
+  company     Company     @relation(fields: [companyId], references: [id])
+
+  @@map("license_policies")
+}
+
+model Document {
+  id          String   @id @default(uuid())
+  companyId   String
+  employeeId  String?
+  name        String
+  type        String
+  url         String
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  company     Company  @relation(fields: [companyId], references: [id])
+  employee    Employee? @relation(fields: [employeeId], references: [id])
+
+  @@map("documents")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  companyId   String?
+  userId      String
+  action      String
+  entityType  String
+  entityId    String?
+  before      Json?
+  after       Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  // Relaciones
+  company     Company? @relation(fields: [companyId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model IntegrationLog {
+  id          String   @id @default(uuid())
+  companyId   String
+  integration String
+  request     Json?
+  response    Json?
+  status      String
+  error       String?
+  createdAt   DateTime @default(now())
+
+  // Relaciones
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  @@map("integration_logs")
+}
+
+model Translation {
+  id          String   @id @default(uuid())
+  key         String
+  language    String
+  value       String
+  module      String?  // "workify", "shopflow", "common"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([key, language, module])
+  @@map("translations")
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  type        String
+  config      Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  @@map("reports")
+}
+
+// ========================================
+// MÓDULO SHOPFLOW (POS)
+// ========================================
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  sku         String?  @unique
+  barcode     String?
+  price       Decimal  @db.Decimal(10, 2)
+  cost        Decimal? @db.Decimal(10, 2)
+  stock       Int      @default(0)
+  minStock    Int?     @default(0)
+  maxStock    Int?
+  categoryId  String?
+  supplierId  String?
+  storeId     String?
+  active      Boolean  @default(true)
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  category   Category?  @relation(fields: [categoryId], references: [id])
+  supplier   Supplier?   @relation(fields: [supplierId], references: [id])
+  saleItems  SaleItem[]
+  inventoryTransfers InventoryTransfer[]
+
+  @@map("products")
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  parentId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relaciones jerárquicas (UNIFICADO - ambos módulos usan jerarquía)
+  parent      Category? @relation("CategoryParent", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryParent")
+
+  // Relaciones
+  products    Product[]
+
+  @@map("categories")
+}
+
+model Supplier {
+  id        String    @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  city      String?
+  state     String?
+  taxId     String?
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relaciones
+  products  Product[]
+
+  @@map("suppliers")
+}
+
+model Customer {
+  id        String    @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relaciones
+  sales     Sale[]
+  loyaltyPoints LoyaltyPoint[]
+
+  @@map("customers")
+}
+
+model Sale {
+  id            String        @id @default(uuid())
+  customerId    String?
+  userId        String
+  invoiceNumber String?       @unique
+  total         Decimal       @db.Decimal(10, 2)
+  subtotal      Decimal       @db.Decimal(10, 2)
+  tax           Decimal       @db.Decimal(10, 2) @default(0)
+  discount      Decimal?      @db.Decimal(10, 2) @default(0)
+  status        SaleStatus    @default(COMPLETED)
+  paymentMethod PaymentMethod?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relaciones
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+  user          User          @relation(fields: [userId], references: [id])
+  items         SaleItem[]
+  loyaltyPoints LoyaltyPoint[]
+
+  @@map("sales")
+}
+
+model SaleItem {
+  id        String   @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  price     Decimal  @db.Decimal(10, 2)
+  discount  Decimal? @db.Decimal(10, 2) @default(0)
+  subtotal  Decimal  @db.Decimal(10, 2)
+
+  // Relaciones
+  sale      Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id])
+
+  @@map("sale_items")
+}
+
+model StoreConfig {
+  id                    String   @id @default(uuid())
+  name                  String
+  address               String?
+  phone                 String?
+  email                 String?
+  taxId                 String?
+  currency              String   @default("USD")
+  taxRate               Decimal  @db.Decimal(5, 4) @default(0)
+  lowStockAlert         Int      @default(10)
+  invoicePrefix         String   @default("INV-")
+  invoiceNumber         Int      @default(1)
+  allowSalesWithoutStock Boolean @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("store_configs")
+}
+
+model TicketConfig {
+  id                String     @id @default(uuid())
+  storeId           String?
+  ticketType        TicketType @default(TICKET)
+  header            String?
+  description       String?
+  logoUrl           String?
+  footer            String?
+  defaultPrinterName String?
+  thermalWidth      Int        @default(80)
+  fontSize          Int        @default(12)
+  copies            Int        @default(1)
+  autoPrint         Boolean    @default(true)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@map("ticket_configs")
+}
+
+model UserPreferences {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  language  String   @default("es")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model InventoryTransfer {
+  id          String        @id @default(uuid())
+  fromStoreId String
+  toStoreId   String
+  productId   String
+  quantity    Int
+  notes       String?
+  status      TransferStatus @default(PENDING)
+  createdById String
+  completedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relaciones
+  product     Product       @relation(fields: [productId], references: [id])
+  createdBy   User          @relation(fields: [createdById], references: [id])
+
+  @@map("inventory_transfers")
+}
+
+model LoyaltyConfig {
+  id                    String   @id @default(uuid())
+  pointsPerDollar       Decimal  @db.Decimal(10, 2)
+  redemptionRate        Decimal  @db.Decimal(10, 4) // Ej: 0.01 = 1 punto = $0.01
+  pointsExpireMonths    Int?
+  minPurchaseForPoints  Decimal  @db.Decimal(10, 2) @default(0)
+  maxPointsPerPurchase   Int?
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("loyalty_configs")
+}
+
+model LoyaltyPoint {
+  id          String           @id @default(uuid())
+  customerId  String
+  saleId      String?
+  points      Int
+  type        LoyaltyPointType
+  description String?
+  expiresAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  // Relaciones
+  customer    Customer         @relation(fields: [customerId], references: [id])
+  sale        Sale?            @relation(fields: [saleId], references: [id])
+
+  @@map("loyalty_points")
+}
+
+model NotificationPreference {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  pushEnabled Boolean  @default(true)
+  emailEnabled Boolean @default(false)
+  inAppEnabled Boolean @default(true)
+  preferences Json?    // { type: { inApp: boolean, push: boolean, email: boolean } }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model ActionHistory {
+  id          String     @id @default(uuid())
+  userId      String
+  action      ActionType
+  entityType  EntityType
+  entityId    String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime   @default(now())
+
+  // Relaciones
+  user        User       @relation(fields: [userId], references: [id])
+
+  @@map("action_history")
+}
+
+// ========================================
+// NOTIFICACIONES (UNIFICADO - Workify + ShopFlow)
+// ========================================
+
+model Notification {
+  id          String            @id @default(uuid())
+  userId      String
+  companyId   String?           // Opcional para Workify
+  type        NotificationType
+  priority    NotificationPriority @default(MEDIUM)
+  title       String
+  message     String
+  data        Json?             // Cambiar de String a Json
+  actionUrl   String?
+  status      NotificationStatus @default(UNREAD)
+  expiresAt   DateTime?
+  readAt      DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  // Relaciones
+  user        User              @relation(fields: [userId], references: [id])
+  company     Company?          @relation(fields: [companyId], references: [id])
+
+  @@map("notifications")
+}

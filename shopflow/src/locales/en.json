@@ -1,0 +1,26 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "confirm": "Confirm"
+  },
+  "settings": {
+    "title": "Settings",
+    "storeInfo": "Store Information",
+    "businessConfig": "Business Configuration",
+    "userPreferences": "User Preferences",
+    "language": "Language",
+    "selectLanguage": "Select Language",
+    "spanish": "Spanish",
+    "english": "English",
+    "allowSalesWithoutStock": "Allow Sales Without Stock",
+    "allowSalesWithoutStockDescription": "Allows completing sales even if the product has no available stock"
+  }
+}

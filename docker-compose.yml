@@ -1,0 +1,177 @@
+version: "3.9"
+
+services:
+  # =========================
+  # Base de datos
+  # =========================
+  postgres:
+    image: postgres:16-alpine
+    container_name: multisystem-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-multisystem_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - multisystem-network
+
+  # =========================
+  # API
+  # =========================
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      target: dev
+    container_name: multisystem-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: ${API_PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/multisystem_db}
+      CORS_ORIGIN: ${CORS_ORIGINS:-http://localhost:3003,http://localhost:3004,http://localhost:3005}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - ./api:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - multisystem-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # =========================
+  # Migraciones DB (Prisma)
+  # =========================
+  migrate-db:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      target: dev
+    container_name: multisystem-migrate-db
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/multisystem_db}
+    command: >
+      sh -c "pnpm exec prisma generate &&
+             pnpm exec prisma db push --accept-data-loss &&
+             pnpm exec prisma db seed"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - multisystem-network
+    profiles:
+      - migration
+
+  # =========================
+  # Frontend Hub
+  # =========================
+  hub-frontend:
+    build:
+      context: ./hub
+      dockerfile: Dockerfile
+      target: dev
+    container_name: multisystem-hub-frontend
+    restart: unless-stopped
+    environment:
+      PORT: ${HUB_FRONTEND_PORT:-3005}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
+      SHOPFLOW_FRONTEND_URL: ${SHOPFLOW_FRONTEND_URL:-http://shopflow-frontend:3003}
+      WORKIFY_FRONTEND_URL: ${WORKIFY_FRONTEND_URL:-http://workify-frontend:3004}
+      NEXT_TELEMETRY_DISABLED: 1
+      WATCHPACK_POLLING: true
+      CHOKIDAR_USEPOLLING: true
+    ports:
+      - "${HUB_FRONTEND_PORT:-3005}:3005"
+    volumes:
+      - ./hub:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - multisystem-network
+
+  # =========================
+  # Frontend ShopFlow
+  # =========================
+  shopflow-frontend:
+    build:
+      context: ./shopflow
+      dockerfile: Dockerfile
+      target: dev
+    container_name: multisystem-shopflow-frontend
+    restart: unless-stopped
+    environment:
+      PORT: ${SHOPFLOW_FRONTEND_PORT:-3003}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
+      NEXT_TELEMETRY_DISABLED: 1
+      WATCHPACK_POLLING: true
+      CHOKIDAR_USEPOLLING: true
+    ports:
+      - "${SHOPFLOW_FRONTEND_PORT:-3003}:3003"
+    volumes:
+      - ./shopflow:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - multisystem-network
+
+  # =========================
+  # Frontend Workify
+  # =========================
+  workify-frontend:
+    build:
+      context: ./workify
+      dockerfile: Dockerfile
+      target: dev
+    container_name: multisystem-workify-frontend
+    restart: unless-stopped
+    environment:
+      PORT: ${WORKIFY_FRONTEND_PORT:-3004}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
+      NEXT_TELEMETRY_DISABLED: 1
+      WATCHPACK_POLLING: true
+      CHOKIDAR_USEPOLLING: true
+    ports:
+      - "${WORKIFY_FRONTEND_PORT:-3004}:3004"
+    volumes:
+      - ./workify:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - multisystem-network
+
+# =========================
+# Volúmenes & Redes
+# =========================
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  multisystem-network:
+    driver: bridge
