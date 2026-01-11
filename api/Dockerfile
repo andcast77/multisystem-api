@@ -92,12 +92,6 @@ RUN echo "Instalando dependencias de desarrollo..." && \
       echo "Usando npm..." && \
       npm install || (echo "ERROR: Fallo en npm install" && exit 1); \
     fi && \
-    echo "Generando Prisma Client..." && \
-    if [ -f pnpm-lock.yaml ]; then \
-      pnpm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
-    else \
-      npm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
-    fi && \
     echo "Verificando instalación de dependencias críticas..." && \
     if [ -f pnpm-lock.yaml ]; then \
       pnpm list express @prisma/client tsx typescript 2>/dev/null || echo "ADVERTENCIA: Verificar dependencias"; \
@@ -124,8 +118,19 @@ RUN echo "Instalando dependencias de desarrollo..." && \
     fi && \
     echo "Dependencias de desarrollo instaladas correctamente"
 
-# Copiar el resto de los archivos
+# Copiar el resto de los archivos (incluyendo prisma/schema.prisma)
 COPY . .
+
+# Generar Prisma Client después de copiar los archivos
+# DATABASE_URL dummy para prisma.config.ts (no se usa realmente en generate)
+RUN echo "Generando Prisma Client..." && \
+    export DATABASE_URL="postgresql://dummy:dummy@dummy:5432/dummy" && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
+    else \
+      npm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
+    fi && \
+    echo "Prisma Client generado correctamente"
 
 # Configurar permisos para volúmenes
 RUN chown -R node:node /app || true
