@@ -8,16 +8,36 @@ WORKDIR /app
 # pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copiamos manifests primero para cache
-COPY package.json pnpm-lock.yaml* package-lock.json* ./
-COPY pnpm-workspace.yaml* ./
-
-# Instalamos dependencias
-RUN if [ -f pnpm-lock.yaml ]; then \
-      pnpm install --frozen-lockfile; \
-    else \
-      npm ci || npm install; \
+# Verificar y copiar archivos de dependencias
+COPY package.json ./
+RUN if [ ! -f package.json ]; then \
+      echo "ERROR: package.json no encontrado" && exit 1; \
     fi
+
+COPY pnpm-lock.yaml* package-lock.json* ./
+
+# Instalamos dependencias con verificación
+RUN echo "Instalando dependencias..." && \
+    if [ -f pnpm-lock.yaml ]; then \
+      echo "Usando pnpm con lockfile..." && \
+      pnpm install --frozen-lockfile || (echo "ERROR: Fallo en pnpm install" && exit 1); \
+    else \
+      echo "Usando npm..." && \
+      npm ci || npm install || (echo "ERROR: Fallo en npm install" && exit 1); \
+    fi && \
+    echo "Generando Prisma Client..." && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
+    else \
+      npm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
+    fi && \
+    echo "Verificando instalación de dependencias críticas..." && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm list express @prisma/client 2>/dev/null || echo "ADVERTENCIA: Algunas dependencias pueden no estar instaladas"; \
+    else \
+      npm list express @prisma/client 2>/dev/null || echo "ADVERTENCIA: Algunas dependencias pueden no estar instaladas"; \
+    fi && \
+    echo "Dependencias instaladas correctamente"
 
 
 # ===============================
@@ -49,26 +69,76 @@ RUN if [ -f tsconfig.json ]; then \
 FROM node:20-alpine AS dev
 
 WORKDIR /app
+
+# Instalar herramientas necesarias para healthcheck y debugging
+RUN apk add --no-cache libc6-compat wget curl
+
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-COPY package.json pnpm-lock.yaml* package-lock.json* ./
-COPY pnpm-workspace.yaml* ./
-
-RUN if [ -f pnpm-lock.yaml ]; then \
-      pnpm install; \
-    else \
-      npm install; \
+# Verificar y copiar archivos de dependencias
+COPY package.json ./
+RUN if [ ! -f package.json ]; then \
+      echo "ERROR: package.json no encontrado" && exit 1; \
     fi
 
+COPY pnpm-lock.yaml* package-lock.json* ./
+
+# Instalar dependencias (incluyendo devDependencies) con verificación
+RUN echo "Instalando dependencias de desarrollo..." && \
+    if [ -f pnpm-lock.yaml ]; then \
+      echo "Usando pnpm..." && \
+      pnpm install --shamefully-hoist || (echo "ERROR: Fallo en pnpm install" && exit 1); \
+    else \
+      echo "Usando npm..." && \
+      npm install || (echo "ERROR: Fallo en npm install" && exit 1); \
+    fi && \
+    echo "Generando Prisma Client..." && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
+    else \
+      npm exec prisma generate || (echo "ERROR: Fallo en generación de Prisma Client" && exit 1); \
+    fi && \
+    echo "Verificando instalación de dependencias críticas..." && \
+    if [ -f pnpm-lock.yaml ]; then \
+      pnpm list express @prisma/client tsx typescript 2>/dev/null || echo "ADVERTENCIA: Verificar dependencias"; \
+      if ! pnpm list express >/dev/null 2>&1; then \
+        echo "ERROR: Express no está instalado correctamente" && exit 1; \
+      fi; \
+      if ! pnpm list @prisma/client >/dev/null 2>&1; then \
+        echo "ERROR: Prisma Client no está instalado correctamente" && exit 1; \
+      fi; \
+      if ! pnpm list tsx >/dev/null 2>&1; then \
+        echo "ERROR: tsx no está instalado correctamente" && exit 1; \
+      fi; \
+    else \
+      npm list express @prisma/client tsx typescript 2>/dev/null || echo "ADVERTENCIA: Verificar dependencias"; \
+      if ! npm list express >/dev/null 2>&1; then \
+        echo "ERROR: Express no está instalado correctamente" && exit 1; \
+      fi; \
+      if ! npm list @prisma/client >/dev/null 2>&1; then \
+        echo "ERROR: Prisma Client no está instalado correctamente" && exit 1; \
+      fi; \
+      if ! npm list tsx >/dev/null 2>&1; then \
+        echo "ERROR: tsx no está instalado correctamente" && exit 1; \
+      fi; \
+    fi && \
+    echo "Dependencias de desarrollo instaladas correctamente"
+
+# Copiar el resto de los archivos
 COPY . .
 
+# Configurar permisos para volúmenes
+RUN chown -R node:node /app || true
+
+# Variables de entorno para desarrollo
 ENV NODE_ENV=development
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["pnpm", "dev"]
+# Script de inicio con verificación
+CMD ["sh", "-c", "echo 'Iniciando servidor de desarrollo API...' && pnpm dev"]
 
 
 # ===============================
