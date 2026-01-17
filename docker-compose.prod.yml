@@ -1,4 +1,4 @@
-version: '3.8'
+﻿version: '3.8'
 
 services:
   # PostgreSQL - Base de datos compartida
@@ -22,10 +22,10 @@ services:
     networks:
       - multisystem-network-prod
 
-  # API Unificada - Producción
+  # API Unificada - ProducciÃ³n
   api:
     build:
-      context: ./api
+      context: ./services/api
       dockerfile: Dockerfile
       target: runtime
     container_name: multisystem-api-prod
@@ -50,10 +50,10 @@ services:
       start_period: 40s
 
   # Migraciones de Base de Datos (ejecuta una vez al inicio)
-  # Nota: Si hay migraciones Prisma, descomentar y ajustar según estructura
+  # Nota: Si hay migraciones Prisma, descomentar y ajustar segÃºn estructura
   # migrate-db:
   #   build:
-  #     context: ./api
+  #     context: ./services/api
   #     dockerfile: Dockerfile
   #     target: build
   #   container_name: multisystem-migrate-db-prod
@@ -99,7 +99,7 @@ services:
       timeout: 3s
       retries: 3
 
-  # Frontend Hub - Producción
+  # Frontend Hub - ProducciÃ³n
   hub-frontend:
     build:
       context: ./hub
@@ -133,7 +133,7 @@ services:
       retries: 3
       start_period: 60s
 
-  # Frontend ShopFlow - Producción
+  # Frontend ShopFlow - ProducciÃ³n
   shopflow-frontend:
     build:
       context: ./shopflow
@@ -159,7 +159,7 @@ services:
       retries: 3
       start_period: 60s
 
-  # Frontend Workify - Producción
+  # Frontend Workify - ProducciÃ³n
   workify-frontend:
     build:
       context: ./workify
@@ -192,3 +192,4 @@ volumes:
 networks:
   multisystem-network-prod:
     driver: bridge
+

@@ -1,4 +1,4 @@
-services:
+﻿services:
   # =========================
   # Base de datos
   # =========================
@@ -27,7 +27,7 @@ services:
   # =========================
   api:
     build:
-      context: ./api
+      context: ./services/api
       dockerfile: Dockerfile
       target: dev
     container_name: multisystem-api
@@ -59,7 +59,7 @@ services:
   # =========================
   migrate-db:
     build:
-      context: ./api
+      context: ./services/api
       dockerfile: Dockerfile
       target: dev
     container_name: multisystem-migrate-db
@@ -209,7 +209,7 @@ services:
       start_period: 5s
 
 # =========================
-# Volúmenes & Redes
+# VolÃºmenes & Redes
 # =========================
 volumes:
   postgres_data:
@@ -218,3 +218,4 @@ volumes:
 networks:
   multisystem-network:
     driver: bridge
+
