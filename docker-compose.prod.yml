@@ -102,7 +102,7 @@ services:
   # Frontend Hub - ProducciÃ³n
   hub-frontend:
     build:
-      context: ./modules/hub
+      context: .
       dockerfile: Dockerfile
       target: runtime
     container_name: multisystem-hub-frontend-prod
@@ -192,6 +192,7 @@ volumes:
 networks:
   multisystem-network-prod:
     driver: bridge
+
 
 
 

@@ -2,10 +2,6 @@
 	path = services/api
 	url = <URL_DEL_REPO_API>
 	
-[submodule "modules/hub"]
-	path = modules/hub
-	url = <URL_DEL_REPO_HUB>
-	
 [submodule "modules/shopflow"]
 	path = modules/shopflow
 	url = <URL_DEL_REPO_SHOPFLOW>
