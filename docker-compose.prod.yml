@@ -73,7 +73,7 @@ services:
   # =========================
   nginx:
     build:
-      context: ./nginx
+      context: ./services/nginx
       dockerfile: Dockerfile
     container_name: multisystem-nginx
     restart: always
@@ -192,5 +192,6 @@ volumes:
 networks:
   multisystem-network-prod:
     driver: bridge
+
 
 

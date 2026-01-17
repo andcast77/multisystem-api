@@ -182,7 +182,7 @@
   # =========================
   nginx:
     build:
-      context: ./nginx
+      context: ./services/nginx
       dockerfile: Dockerfile
     container_name: multisystem-nginx
     restart: unless-stopped
@@ -218,5 +218,6 @@ volumes:
 networks:
   multisystem-network:
     driver: bridge
+
 
 
