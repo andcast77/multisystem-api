@@ -257,6 +257,95 @@ git commit -m "chore: actualizar referencia de api"
 - Se inicializa automáticamente con `git submodule update --init --recursive`
 - Los cambios se commitean en el repositorio de `services/api/`
 - La referencia se actualiza en el repositorio principal cuando cambias la versión
+- `services/api/` consume `services/database/` como dependencia (`@multisystem/database`)
+
+## Trabajar con el Servicio Database
+
+El servicio `services/database/` es un Git Submodule que gestiona Prisma (schema, migraciones, cliente). Este servicio es consumido por `services/api/` y otros servicios que necesiten acceso a la base de datos.
+
+### Estructura del Servicio Database
+
+```
+services/database/
+├── prisma/
+│   ├── schema.prisma      # Schema de Prisma
+│   └── migrations/        # Migraciones de BD
+├── src/
+│   └── client.ts          # Cliente Prisma exportado
+└── package.json           # "@multisystem/database"
+```
+
+### Actualizar el Servicio Database
+
+```bash
+# Actualizar services/database/ como cualquier otro submodule
+git submodule update --remote services/database
+
+# O actualizar todos los submodules
+git submodule update --remote
+```
+
+### Desarrollo en el Servicio Database
+
+```bash
+# Trabajar en services/database/
+cd services/database
+git checkout -b feature/nueva-migracion
+
+# Hacer cambios en schema.prisma
+# ...
+
+# Ejecutar migración
+pnpm prisma migrate dev --name nueva_tabla
+pnpm prisma generate
+
+git commit -m "feat: agregar nueva tabla"
+git push origin feature/nueva-migracion
+
+# Volver al repositorio principal y actualizar la referencia
+cd ../..
+git add services/database
+git commit -m "chore: actualizar database a nueva versión"
+```
+
+### Uso del Servicio Database
+
+El servicio `services/database/` es consumido por `services/api/` mediante dependencia local:
+
+```json
+// services/api/package.json
+{
+  "dependencies": {
+    "@multisystem/database": "file:../database"
+  }
+}
+```
+
+```typescript
+// services/api/src/services/productService.ts
+import { prisma } from '@multisystem/database'
+
+export async function getProducts() {
+  return prisma.product.findMany()
+}
+```
+
+### Migraciones
+
+Las migraciones se ejecutan desde `services/database/`:
+
+```bash
+cd services/database
+pnpm prisma migrate dev --name nombre_migracion
+pnpm prisma generate
+```
+
+### Notas Importantes
+
+- `services/database/` es un Git Submodule independiente
+- Contiene Prisma schema, migraciones y cliente Prisma
+- `services/api/` lo consume como dependencia `file:../database`
+- Las migraciones se ejecutan desde `services/database/`, no desde `services/api/`
 
 ## Agregar Nuevos Módulos
 

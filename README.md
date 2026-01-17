@@ -10,7 +10,6 @@ Multisystem está estructurado en tres categorías principales:
 - **`services/api/`** - API compartida con Prisma y base de datos unificada (servicio backend)
   - 🔗 **Git Submodule** - Servicio compartido que consumen todos los módulos frontend
 - **`nginx/`** - Configuración del reverse proxy
-- **`docs/`** - Documentación del proyecto
 - **`scripts/`** - Scripts de utilidad para desarrollo
 - **`docker-compose.yml`** - Orquestación de servicios
 
@@ -35,6 +34,7 @@ Cada módulo frontend es un **Git Submodule** independiente con su propio reposi
 - Docker y Docker Compose
 - Git
 - Node.js 20+ y pnpm (para desarrollo local)
+- Tailwind CSS está configurado (incluido en el proyecto)
 
 ### Clonar el Proyecto
 
@@ -109,7 +109,8 @@ pnpm dev
 
 # 5. En otra terminal, iniciar hub (desde la raíz) y cada módulo
 # Hub está en la raíz, así que desde multisystem/
-pnpm install
+# Las dependencias ya están instaladas (pnpm-lock.yaml existe)
+pnpm install  # Solo necesario si cambias dependencias
 pnpm dev
 
 # En otra terminal, iniciar módulos
@@ -127,19 +128,29 @@ pnpm dev
 ```
 multisystem/
 ├── services/               # 🔗 Servicios compartidos (submodules)
-│   └── api/               # Servicio backend compartido
+│   ├── api/               # Servicio backend compartido
+│   │   ├── src/
+│   │   │   ├── routes/    # Rutas de la API
+│   │   │   └── lib/       # Utilidades compartidas
+│   │   └── package.json   # Depende de @multisystem/database
+│   │
+│   └── database/          # 🔗 Servicio de base de datos (submodule)
+│       ├── prisma/        # Schema y migraciones de BD
+│       │   ├── schema.prisma
+│       │   └── migrations/
 │       ├── src/
-│       │   ├── routes/    # Rutas de la API
-│       │   └── lib/       # Utilidades compartidas
-│       └── prisma/        # Schema y migraciones de BD
-│
-├── nginx/                  # ✅ Configuración reverse proxy
-│   ├── nginx.conf
-│   └── Dockerfile
+│       │   └── client.ts  # Cliente Prisma exportado
+│       └── package.json
 │
 ├── [archivos de Next.js]   # ✅ Aplicación hub en la raíz
 │   ├── package.json
+│   ├── pnpm-lock.yaml      # Lockfile de dependencias
 │   ├── next.config.js
+│   ├── tsconfig.json
+│   ├── tailwind.config.js  # Configuración Tailwind CSS
+│   ├── postcss.config.js   # Configuración PostCSS
+│   ├── nginx.conf          # Configuración reverse proxy
+│   ├── Dockerfile          # Multi-stage Dockerfile
 │   ├── src/
 │   └── ...
 │
@@ -151,9 +162,6 @@ multisystem/
 │   ├── setup-submodules.sh
 │   ├── update-submodules.sh
 │   └── init-dev.sh
-│
-├── docs/                   # ✅ Documentación
-│   └── plans/             # Planes de arquitectura
 │
 ├── docker-compose.yml      # ✅ Desarrollo
 ├── docker-compose.prod.yml # ✅ Producción
@@ -260,17 +268,30 @@ git commit -m "feat: agregar nuevo módulo"
 | Nginx | 80 | Reverse proxy |
 | PostgreSQL | 5432 | Base de datos |
 
-## 📚 Documentación Adicional
-
-- [Guía de Desarrollo](docs/DEVELOPMENT.md) - Guía detallada para trabajar con submodules
-- [Arquitectura Multi-Módulo](docs/plans/arquitectura-multi-modulo.md) - Documentación de arquitectura
-
 ## 🐳 Docker
+
+El proyecto incluye un Dockerfile multi-stage optimizado con los siguientes targets:
+
+- **`deps`**: Instalación de dependencias
+- **`build`**: Compilación de producción
+- **`runtime`**: Imagen optimizada para producción (usa `output: standalone`)
+- **`dev`**: Entorno de desarrollo
+- **`dev-with-nginx`**: Desarrollo con Nginx integrado como reverse proxy
 
 ### Desarrollo
 
 ```bash
+# Iniciar todos los servicios (incluye PostgreSQL, API, módulos y hub)
 docker-compose up -d
+
+# Ver logs
+docker-compose logs -f
+
+# Ver logs de un servicio específico
+docker-compose logs -f hub-frontend
+
+# Detener servicios
+docker-compose down
 ```
 
 ### Producción
@@ -279,11 +300,65 @@ docker-compose up -d
 docker-compose -f docker-compose.prod.yml up -d
 ```
 
+### Build Manual
+
+```bash
+# Build para desarrollo (con Nginx)
+docker build -t multisystem-hub --target dev-with-nginx .
+
+# Build para producción
+docker build -t multisystem-hub-prod --target runtime .
+```
+
 ### Ejecutar Migraciones
 
 ```bash
 docker-compose --profile migration up migrate-db
 ```
+
+## 🚂 Despliegue en Railway
+
+Railway es la plataforma recomendada para desplegar Multisystem en producción debido a su soporte nativo para Docker Compose y PostgreSQL gestionado.
+
+### Inicio Rápido
+
+1. Conecta tu repositorio de GitHub a Railway
+2. Railway detectará automáticamente `docker-compose.prod.yml`
+3. Configura PostgreSQL como servicio gestionado
+4. Ajusta variables de entorno
+5. Despliega
+
+Para una guía detallada, consulta [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md).
+
+### Ventajas de Railway
+
+- ✅ Soporte nativo de Docker Compose
+- ✅ PostgreSQL gestionado incluido
+- ✅ Networking automático entre servicios
+- ✅ Soporte para Git Submodules
+- ✅ Despliegue en minutos
+- ✅ Precio razonable ($5 crédito/mes en plan gratuito)
+
+### Configuración Básica
+
+Railway detecta automáticamente tu `docker-compose.prod.yml` y despliega todos los servicios. Solo necesitas:
+
+1. **PostgreSQL gestionado**: Crea un servicio PostgreSQL en Railway y usa su `DATABASE_URL`
+2. **Variables de entorno**: Configura las variables necesarias en el dashboard
+3. **Dominios públicos**: Railway genera URLs públicas automáticamente
+
+### Variables de Entorno Principales
+
+```bash
+DATABASE_URL=postgresql://...  # URL de PostgreSQL gestionado de Railway
+NODE_ENV=production
+NEXT_PUBLIC_API_URL=http://api:3000
+NEXT_PUBLIC_SHOPFLOW_URL=http://shopflow-frontend:3003
+NEXT_PUBLIC_WORKIFY_URL=http://workify-frontend:3004
+CORS_ORIGINS=https://tu-proyecto.railway.app
+```
+
+Ver [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) para la lista completa y configuración detallada.
 
 ## 🔐 Variables de Entorno
 
@@ -294,6 +369,11 @@ Copia `.env.example` a `.env` y configura:
 - `POSTGRES_PASSWORD` - Contraseña de PostgreSQL
 - `API_PORT` - Puerto del servicio API (default: 3000)
 - `CORS_ORIGINS` - Orígenes permitidos para CORS
+- `NEXT_PUBLIC_API_URL` - URL de la API para los frontends
+- `NEXT_PUBLIC_SHOPFLOW_URL` - URL del módulo ShopFlow
+- `NEXT_PUBLIC_WORKIFY_URL` - URL del módulo Workify
+
+Ver `env.example` para todas las variables disponibles.
 
 ## 📝 Notas sobre la Arquitectura
 
@@ -303,7 +383,7 @@ Copia `.env.example` a `.env` y configura:
 - **Servicios Compartidos como Submodules**:
   - **`services/api/`**: Servicio backend compartido que consumen todos los módulos
     - Git Submodule en `services/`
-- **Servicios de Infraestructura** (`nginx/`, `docs/`, `scripts/`): Parte del repositorio principal de multisystem
+- **Servicios de Infraestructura** (`nginx/`, `scripts/`): Parte del repositorio principal de multisystem
 - **Módulos Frontend como Submodules** (`modules/shopflow/`, `modules/workify/`): Aplicaciones frontend independientes
 
 **Estructura de Submodules**:
@@ -325,6 +405,9 @@ Copia `.env.example` a `.env` y configura:
 - **El repositorio principal trackea referencias de submodules**: No se duplican commits de servicios ni módulos
 - **Docker funciona con rutas locales**: El contexto de hub apunta a la raíz (`.`), servicios a `services/api/` y módulos a `modules/`
 - **Actualiza submodules regularmente**: Usa `git submodule update --remote` para actualizar todos los submodules
+- **Tailwind CSS configurado**: El proyecto incluye Tailwind CSS con configuración completa (`tailwind.config.js`, `postcss.config.js`)
+- **Lockfile incluido**: El proyecto incluye `pnpm-lock.yaml` para builds reproducibles
+- **Nginx integrado**: El hub incluye Nginx como reverse proxy en el contenedor (stage `dev-with-nginx`)
 
 ## 🆘 Solución de Problemas
 

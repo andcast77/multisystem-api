@@ -59,14 +59,15 @@ services:
   # =========================
   migrate-db:
     build:
-      context: ./services/api
+      context: ./services/database
       dockerfile: Dockerfile
       target: dev
     container_name: multisystem-migrate-db
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/multisystem_db}
     command: >
-      sh -c "pnpm exec prisma generate &&
+      sh -c "pnpm install &&
+             pnpm exec prisma generate &&
              pnpm exec prisma db push --accept-data-loss &&
              pnpm exec prisma db seed"
     depends_on:

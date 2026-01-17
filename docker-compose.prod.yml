@@ -1,4 +1,4 @@
-﻿version: '3.8'
+version: '3.8'
 
 services:
   # PostgreSQL - Base de datos compartida
@@ -50,72 +50,46 @@ services:
       start_period: 40s
 
   # Migraciones de Base de Datos (ejecuta una vez al inicio)
-  # Nota: Si hay migraciones Prisma, descomentar y ajustar segÃºn estructura
-  # migrate-db:
-  #   build:
-  #     context: ./services/api
-  #     dockerfile: Dockerfile
-  #     target: build
-  #   container_name: multisystem-migrate-db-prod
-  #   environment:
-  #     DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/multisystem_db}
-  #   command: sh -c "pnpm exec prisma generate && pnpm exec prisma db push --accept-data-loss"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks:
-  #     - multisystem-network-prod
-  #   profiles:
-  #     - migration
-
-  # =========================
-  # Nginx Reverse Proxy
-  # =========================
-  nginx:
+  migrate-db:
     build:
-      context: ./services/nginx
+      context: ./services/database
       dockerfile: Dockerfile
-    container_name: multisystem-nginx
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      target: runtime
+    container_name: multisystem-migrate-db-prod
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/multisystem_db}
+    command: >
+      sh -c "pnpm install &&
+             pnpm exec prisma generate &&
+             pnpm exec prisma migrate deploy"
     depends_on:
-      hub-frontend:
-        condition: service_healthy
-      shopflow-frontend:
-        condition: service_healthy
-      workify-frontend:
-        condition: service_healthy
-      api:
+      postgres:
         condition: service_healthy
     networks:
       - multisystem-network-prod
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
+    profiles:
+      - migration
 
-  # Frontend Hub - ProducciÃ³n
+  # Frontend Hub - Producción
   hub-frontend:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
+      target: runtime-with-nginx
     container_name: multisystem-hub-frontend-prod
     restart: always
     environment:
       NODE_ENV: production
       PORT: ${HUB_FRONTEND_PORT:-3005}
+      HOSTNAME: "0.0.0.0"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
       NEXT_PUBLIC_SHOPFLOW_URL: ${NEXT_PUBLIC_SHOPFLOW_URL:-http://shopflow-frontend:3003}
       NEXT_PUBLIC_WORKIFY_URL: ${NEXT_PUBLIC_WORKIFY_URL:-http://workify-frontend:3004}
       NEXT_PUBLIC_SHOPFLOW_ENABLED: ${NEXT_PUBLIC_SHOPFLOW_ENABLED:-"true"}
       NEXT_PUBLIC_WORKIFY_ENABLED: ${NEXT_PUBLIC_WORKIFY_ENABLED:-"true"}
+      NEXT_TELEMETRY_DISABLED: 1
     ports:
+      - "80:80"
       - "${HUB_FRONTEND_PORT:-3005}:3005"
     depends_on:
       api:
@@ -127,16 +101,16 @@ services:
     networks:
       - multisystem-network-prod
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3005/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
-  # Frontend ShopFlow - ProducciÃ³n
+  # Frontend ShopFlow - Producción
   shopflow-frontend:
     build:
-      context: ./shopflow
+      context: ./modules/shopflow
       dockerfile: Dockerfile
       target: runtime
     container_name: multisystem-shopflow-frontend-prod
@@ -159,10 +133,10 @@ services:
       retries: 3
       start_period: 60s
 
-  # Frontend Workify - ProducciÃ³n
+  # Frontend Workify - Producción
   workify-frontend:
     build:
-      context: ./workify
+      context: ./modules/workify
       dockerfile: Dockerfile
       target: runtime
     container_name: multisystem-workify-frontend-prod
