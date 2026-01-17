@@ -1,11 +1,11 @@
-﻿[submodule "services/api"]
+[submodule "services/api"]
 	path = services/api
 	url = <URL_DEL_REPO_API>
-	
+
 [submodule "modules/shopflow"]
 	path = modules/shopflow
 	url = <URL_DEL_REPO_SHOPFLOW>
-	
+
 [submodule "modules/workify"]
 	path = modules/workify
 	url = <URL_DEL_REPO_WORKIFY>

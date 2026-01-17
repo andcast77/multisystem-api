@@ -1,4 +1,4 @@
-﻿services:
+services:
   # =========================
   # Base de datos
   # =========================
@@ -40,7 +40,7 @@
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:
-      - ./api:/app
+      - ./:/app
       - /app/node_modules
     depends_on:
       postgres:
@@ -84,12 +84,12 @@
     build:
       context: .
       dockerfile: Dockerfile
-      target: dev
+      target: dev-with-nginx
     container_name: multisystem-hub-frontend
     restart: unless-stopped
     environment:
       NODE_ENV: development
-      PORT: ${HUB_FRONTEND_PORT:-3005}
+      PORT: 3005
       HOSTNAME: "0.0.0.0"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
       NEXT_PUBLIC_SHOPFLOW_URL: ${NEXT_PUBLIC_SHOPFLOW_URL:-http://shopflow-frontend:3003}
@@ -100,11 +100,13 @@
       WATCHPACK_POLLING: true
       CHOKIDAR_USEPOLLING: true
     ports:
-      - "${HUB_FRONTEND_PORT:-3005}:3005"
+      - "80:80"
+      - "3005:3005"
     volumes:
-      - ./hub:/app
+      - ./:/app
       - /app/node_modules
       - /app/.next
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       api:
         condition: service_healthy
@@ -115,7 +117,7 @@
     networks:
       - multisystem-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3005/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -126,7 +128,7 @@
   # =========================
   shopflow-frontend:
     build:
-      context: ./shopflow
+      context: ./modules/shopflow
       dockerfile: Dockerfile
       target: dev
     container_name: multisystem-shopflow-frontend
@@ -140,7 +142,7 @@
     ports:
       - "${SHOPFLOW_FRONTEND_PORT:-3003}:3003"
     volumes:
-      - ./shopflow:/app
+      - ./:/app
       - /app/node_modules
       - /app/.next
     depends_on:
@@ -154,7 +156,7 @@
   # =========================
   workify-frontend:
     build:
-      context: ./workify
+      context: ./modules/workify
       dockerfile: Dockerfile
       target: dev
     container_name: multisystem-workify-frontend
@@ -168,7 +170,7 @@
     ports:
       - "${WORKIFY_FRONTEND_PORT:-3004}:3004"
     volumes:
-      - ./workify:/app
+      - ./:/app
       - /app/node_modules
       - /app/.next
     depends_on:
@@ -177,36 +179,6 @@
     networks:
       - multisystem-network
 
-  # =========================
-  # Nginx Reverse Proxy
-  # =========================
-  nginx:
-    build:
-      context: ./services/nginx
-      dockerfile: Dockerfile
-    container_name: multisystem-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      hub-frontend:
-        condition: service_started
-      shopflow-frontend:
-        condition: service_started
-      workify-frontend:
-        condition: service_started
-      api:
-        condition: service_healthy
-    networks:
-      - multisystem-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
 
 # =========================
 # VolÃºmenes & Redes

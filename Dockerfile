@@ -127,3 +127,28 @@ EXPOSE 3005
 
 # Script de inicio con verificación
 CMD ["sh", "-c", "echo 'Iniciando servidor de desarrollo Hub...' && pnpm dev"]
+
+# =========================
+# Stage 5: Development con Nginx
+# =========================
+FROM dev AS dev-with-nginx
+
+# Instalar Nginx
+RUN apk add --no-cache nginx
+
+# Crear directorios necesarios
+RUN mkdir -p /var/log/nginx /var/cache/nginx /run/nginx
+
+# Copiar configuración de Nginx
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Exponer puerto 80 para Nginx
+EXPOSE 80
+
+# Health check que verifica tanto Next.js como Nginx
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost/health && \
+      wget --no-verbose --tries=1 --spider http://localhost:3005/api/health
+
+# Script de inicio que ejecuta tanto Nginx como Next.js
+CMD ["sh", "-c", "nginx && echo 'Nginx iniciado' && sleep 2 && echo 'Iniciando servidor de desarrollo Hub...' && pnpm dev"]
