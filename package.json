@@ -17,13 +17,11 @@
   "dependencies": {
     "fastify": "^4.24.3",
     "@fastify/cors": "^8.4.0",
-    "@fastify/env": "^4.2.0",
-    "@prisma/client": "^5.18.1"
+    "@fastify/env": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "20",
     "typescript": "5",
-    "tsx": "^4.7.0",
-    "prisma": "^5.18.1"
+    "tsx": "^4.7.0"
   }
 }
