@@ -1,0 +1,25 @@
+# Configuración para Render.com (Opcional)
+# Este archivo permite configuración declarativa del servicio
+# También puedes configurar todo desde el dashboard de Render
+
+services:
+  - type: web
+    name: multisystem-api
+    env: node
+    region: oregon  # Cambia según tu preferencia: oregon, frankfurt, singapore, etc.
+    plan: free
+    buildCommand: pnpm install --prod=false && pnpm build
+    startCommand: pnpm start
+    rootDir: services/api  # IMPORTANTE: Configura esto en el dashboard de Render también
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000  # Render lo sobrescribirá automáticamente, pero puedes dejarlo
+      # IMPORTANTE: Configura estas variables desde el dashboard de Render:
+      # - DATABASE_URL (tu connection string de Neon)
+      # - CORS_ORIGIN (URLs de tus frontends separadas por comas)
+
+# Nota: Las variables sensibles (DATABASE_URL, CORS_ORIGIN) deben configurarse
+# desde el dashboard de Render por seguridad, no en este archivo.
