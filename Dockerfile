@@ -86,28 +86,9 @@ RUN if [ ! -f package.json ]; then \
 
 COPY pnpm-lock.yaml* pnpm-workspace.yaml* package-lock.json* ./
 
-# Instalar dependencias (incluyendo devDependencies) con verificación
-RUN echo "Instalando dependencias de desarrollo..." && \
-    if [ -f pnpm-lock.yaml ]; then \
-      echo "Usando pnpm..." && \
-      pnpm install --shamefully-hoist || (echo "ERROR: Fallo en pnpm install" && exit 1); \
-    else \
-      echo "Usando npm..." && \
-      npm install || (echo "ERROR: Fallo en npm install" && exit 1); \
-    fi && \
-    echo "Verificando instalación de dependencias críticas..." && \
-    if [ -f pnpm-lock.yaml ]; then \
-      pnpm list next react react-dom typescript 2>/dev/null || echo "ADVERTENCIA: Verificar dependencias"; \
-      if ! pnpm list next >/dev/null 2>&1; then \
-        echo "ERROR: Next.js no está instalado correctamente" && exit 1; \
-      fi; \
-    else \
-      npm list next react react-dom typescript 2>/dev/null || echo "ADVERTENCIA: Verificar dependencias"; \
-      if ! npm list next >/dev/null 2>&1; then \
-        echo "ERROR: Next.js no está instalado correctamente" && exit 1; \
-      fi; \
-    fi && \
-    echo "Dependencias de desarrollo instaladas correctamente"
+# NO instalar dependencias durante build - se instalarán en runtime cuando el volumen esté montado
+# Esto permite que la API levante sin necesidad de database durante el build
+# La dependencia @multisystem/database estará disponible en runtime cuando el volumen se monte
 
 # Copiar el resto de los archivos
 COPY . .
@@ -117,16 +98,19 @@ RUN chown -R node:node /app || true
 
 # Variables de entorno para desarrollo
 ENV NODE_ENV=development
-ENV PORT=3005
+ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV CI="true"
 ENV WATCHPACK_POLLING=true
 ENV CHOKIDAR_USEPOLLING=true
 
-EXPOSE 3005
+EXPOSE 3000
 
-# Script de inicio con verificación
-CMD ["sh", "-c", "echo 'Iniciando servidor de desarrollo Hub...' && pnpm dev"]
+# Script de inicio con verificación e instalación de dependencias si es necesario
+# El volumen monta ./:/app, así que el código estará en /app/services/api
+# Generamos Prisma Client desde el schema único en services/database (NO requiere BD levantada)
+# La API puede levantarse sin BD - Prisma Client solo necesita el schema, no conexión
+CMD ["sh", "-c", "cd /app/services/api && echo 'Instalando dependencias...' && pnpm install --shamefully-hoist && echo 'Generando Prisma Client desde schema único en services/database...' && npx prisma generate --schema=../database/prisma/schema.prisma || echo '⚠️  No se pudo generar Prisma Client (schema no disponible aún)' && echo 'Iniciando servidor API Fastify...' && pnpm dev"]
 
 # =========================
 # Stage 5: Development con Nginx

@@ -172,6 +172,122 @@ multisystem/
 - ✅ = Contenido del repositorio principal (multisystem)
 - 🔗 = Git Submodules (repositorios independientes)
 
+## 🧪 Testing
+
+La API incluye una suite completa de tests unitarios e integración usando Vitest.
+
+### Estructura de Tests
+
+```
+src/
+├── __tests__/
+│   ├── unit/                  # Tests unitarios
+│   │   ├── routes/
+│   │   │   └── health.test.ts
+│   │   └── server.test.ts
+│   ├── integration/           # Tests de integración
+│   │   └── api.integration.test.ts
+│   └── helpers/              # Utilidades para tests
+│       └── test-utils.ts
+```
+
+### Ejecutar Tests
+
+```bash
+# Instalar dependencias primero
+pnpm install
+
+# Ejecutar todos los tests
+pnpm test
+
+# Ejecutar solo tests unitarios
+pnpm test:unit
+
+# Ejecutar solo tests de integración
+pnpm test:integration
+
+# Modo watch (ejecuta tests automáticamente al cambiar archivos)
+pnpm test:watch
+
+# Interfaz visual de tests
+pnpm test:ui
+
+# Tests con cobertura de código
+pnpm test:coverage
+
+# Script de endpoints (requiere servidor corriendo)
+pnpm test:endpoints
+```
+
+### Script de Endpoints
+
+El script `test-endpoints.js` permite probar la API cuando el servidor está corriendo:
+
+```bash
+# Probar contra servidor local (default: http://localhost:3000)
+pnpm test:endpoints
+
+# Probar contra servidor específico
+pnpm test:endpoints http://localhost:3001
+
+# Modo verbose (más información)
+pnpm test:endpoints --verbose
+```
+
+Este script prueba:
+- Endpoints existentes (GET /health)
+- Respuestas correctas y tiempos de respuesta
+- Headers CORS
+- Manejo de rutas inexistentes (404)
+- Requests concurrentes
+- Validación de métodos HTTP
+
+### Escribir Nuevos Tests
+
+#### Test Unitario
+
+```typescript
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { buildTestServer, closeTestServer } from '../helpers/test-utils'
+import type { FastifyInstance } from 'fastify'
+
+describe('Mi Ruta', () => {
+  let app: FastifyInstance
+
+  beforeEach(async () => {
+    app = await buildTestServer({ logger: false })
+  })
+
+  afterEach(async () => {
+    await closeTestServer(app)
+  })
+
+  it('debería responder correctamente', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/mi-ruta'
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ data: 'valor' })
+  })
+})
+```
+
+#### Test de Integración
+
+Los tests de integración verifican el comportamiento completo de la API, incluyendo plugins y configuración.
+
+### Cobertura de Código
+
+Para ver el reporte de cobertura:
+
+```bash
+pnpm test:coverage
+```
+
+El reporte se genera en `coverage/` y muestra qué líneas de código están cubiertas por los tests.
+
 ## 🔧 Scripts Disponibles
 
 ### Setup de Submodules
