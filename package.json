@@ -24,11 +24,6 @@
     "@types/node": "20",
     "typescript": "5",
     "tsx": "^4.7.0",
-    "prisma": "^5.18.1",
-    "vitest": "^1.0.0",
-    "@vitest/ui": "^1.0.0",
-    "@vitest/coverage-v8": "^1.0.0",
-    "light-my-request": "^5.0.0",
-    "@types/light-my-request": "^5.0.0"
+    "prisma": "^5.18.1"
   }
 }
