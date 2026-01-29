@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
-import { healthRoutes } from './health'
-import { usersRoutes } from './users'
+import { healthRoutes } from './health.js'
+import { usersRoutes } from './users.js'
 
 export async function registerRoutes(fastify: FastifyInstance) {
   await fastify.register(healthRoutes)

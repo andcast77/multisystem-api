@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql, type User } from '../db/neon'
+import { sql, type User } from '../db/neon.js'
 
 export async function usersRoutes(fastify: FastifyInstance) {
   // GET /api/users - Obtener todos los usuarios
