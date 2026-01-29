@@ -19,6 +19,27 @@ export const sql = ((strings: TemplateStringsArray, ...values: any[]) => {
   return getSql()(strings, ...values)
 }) as ReturnType<typeof neon>
 
+// Helper function to ensure SQL results are treated as arrays
+export async function sqlQuery<T = any>(query: Promise<any>): Promise<T[]> {
+  const result = await query
+  // Ensure result is always an array
+  if (Array.isArray(result)) {
+    return result as T[]
+  }
+  // If result is not an array, wrap it
+  return result ? [result] as T[] : []
+}
+
+// Helper function for unsafe queries with parameter substitution
+export async function sqlUnsafe<T = any>(query: string, values?: any[]): Promise<T[]> {
+  // Use sql.unsafe directly - Neon supports this signature
+  const result = values ? await (sql.unsafe as any)(query, values) : await (sql.unsafe as any)(query)
+  if (Array.isArray(result)) {
+    return result as T[]
+  }
+  return result ? [result] as T[] : []
+}
+
 // Helper para tipado de resultados
 export type User = {
   id: string

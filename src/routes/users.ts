@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql, type User } from '../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe, type User } from '../db/neon.js'
 import bcrypt from 'bcrypt'
 
 export async function usersRoutes(fastify: FastifyInstance) {
@@ -97,9 +97,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const { email, password, name, role, active } = request.body
 
       // Check if user already exists
-      const existing = await sql`
+      const existing = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM users WHERE email = ${email} LIMIT 1
-      `
+      `)
 
       if (existing.length > 0) {
         reply.code(400)
@@ -112,11 +112,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
       // Hash password using bcrypt
       const hashedPassword = await bcrypt.hash(password, 10)
 
-      const user = await sql`
+      const user = await sqlQuery<User>(sql`
         INSERT INTO users (email, password, name, role, active)
         VALUES (${email}, ${hashedPassword}, ${name}, ${role || 'USER'}, ${active ?? true})
         RETURNING id, email, name, role, active, "createdAt", "updatedAt"
-      `
+      `)
 
       return {
         success: true,
@@ -150,9 +150,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const { email, password, name, role, active } = request.body
 
       // Check if user exists
-      const existing = await sql`
+      const existing = await sqlQuery<{ id: string; email: string }>(sql`
         SELECT id, email FROM users WHERE id = ${id} LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -164,9 +164,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       // Check if email is already taken
       if (email && email !== existing[0].email) {
-        const emailCheck = await sql`
+        const emailCheck = await sqlQuery<{ id: string }>(sql`
           SELECT id FROM users WHERE email = ${email} LIMIT 1
-        `
+        `)
         if (emailCheck.length > 0) {
           reply.code(400)
           return {
@@ -220,7 +220,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
         RETURNING id, email, name, role, active, "createdAt", "updatedAt"
       `
 
-      const updated = await sql.unsafe(query, values)
+      const updated = await sqlUnsafe<User>(query, values)
 
       return {
         success: true,
@@ -244,9 +244,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const { id } = request.params
 
       // Check if user exists
-      const existing = await sql`
+      const existing = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM users WHERE id = ${id} LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -257,11 +257,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
       }
 
       // Check if user has sales
-      const salesCount = await sql`
+      const salesCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count FROM sales WHERE "userId" = ${id}
-      `
+      `)
 
-      if (parseInt(salesCount[0].count) > 0) {
+      if (parseInt(salesCount[0]?.count || '0') > 0) {
         reply.code(400)
         return {
           success: false,

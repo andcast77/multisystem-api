@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
 
 export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/user-preferences - Get user preferences
@@ -9,22 +9,22 @@ export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
       try {
         const { userId } = request.params
 
-        let preferences = await sql`
+        let preferences = await sqlQuery<any>(sql`
           SELECT 
             id, "userId", language, theme, "createdAt", "updatedAt"
           FROM "userPreferences"
           WHERE "userId" = ${userId}
           LIMIT 1
-        `
+        `)
 
         if (preferences.length === 0) {
           // Create default preferences
-          const defaultPrefs = await sql`
+          const defaultPrefs = await sqlQuery<any>(sql`
             INSERT INTO "userPreferences" ("userId", language)
             VALUES (${userId}, 'es')
             RETURNING 
               id, "userId", language, theme, "createdAt", "updatedAt"
-          `
+          `)
 
           return {
             success: true,
@@ -62,18 +62,18 @@ export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
       const { language, theme } = request.body
 
       // Get or create preferences
-      let preferences = await sql`
+      let preferences = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM "userPreferences" WHERE "userId" = ${userId} LIMIT 1
-      `
+      `)
 
       if (preferences.length === 0) {
         // Create if doesn't exist
-        const newPrefs = await sql`
+        const newPrefs = await sqlQuery<any>(sql`
           INSERT INTO "userPreferences" ("userId", language, theme)
           VALUES (${userId}, ${language ?? 'es'}, ${theme})
           RETURNING 
             id, "userId", language, theme, "createdAt", "updatedAt"
-        `
+        `)
 
         return {
           success: true,
@@ -113,7 +113,7 @@ export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
           id, "userId", language, theme, "createdAt", "updatedAt"
       `
 
-      const updated = await sql.unsafe(query, values)
+      const updated = await sqlUnsafe<any>(query, values)
 
       return {
         success: true,

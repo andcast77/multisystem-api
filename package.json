@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "20",
+    "@types/bcrypt": "^5.0.2",
     "typescript": "5",
     "tsx": "^4.7.0"
   }

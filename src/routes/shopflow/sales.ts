@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlUnsafe } from '../../db/neon.js'
 
 export type Sale = {
   id: string
@@ -106,7 +106,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
 
       // Get total count for pagination
       const countQuery = query.replace(/SELECT.*FROM/, 'SELECT COUNT(*) as total FROM')
-      const countResult = await sql.unsafe(countQuery.replace(/ORDER BY.*/, ''))
+      const countResult = await sqlUnsafe<{ total: string }>(countQuery.replace(/ORDER BY.*/, ''))
       const total = parseInt(countResult[0]?.total || '0')
 
       // Get paginated results

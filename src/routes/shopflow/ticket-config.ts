@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
 
 export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/ticket-config - Get ticket configuration
@@ -9,7 +9,7 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
       try {
         const { storeId } = request.query
 
-        let config = await sql`
+        let config = await sqlQuery<any>(sql`
           SELECT 
             id, "storeId", "ticketType", header, description, "logoUrl", footer,
             "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
@@ -18,11 +18,11 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
           WHERE "storeId" IS NOT DISTINCT FROM ${storeId || null}
           ORDER BY "createdAt" DESC
           LIMIT 1
-        `
+        `)
 
         if (config.length === 0) {
           // Create default config
-          const defaultConfig = await sql`
+          const defaultConfig = await sqlQuery<any>(sql`
             INSERT INTO "ticketConfig" (
               "storeId", "ticketType", "thermalWidth", "fontSize", copies, "autoPrint"
             )
@@ -33,7 +33,7 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
               id, "storeId", "ticketType", header, description, "logoUrl", footer,
               "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
               "createdAt", "updatedAt"
-          `
+          `)
 
           return {
             success: true,
@@ -80,16 +80,16 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
       const body = request.body
 
       // Get current config
-      const current = await sql`
+      const current = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM "ticketConfig"
         WHERE "storeId" IS NOT DISTINCT FROM ${storeId || null}
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       if (current.length === 0) {
         // Create if doesn't exist
-        const newConfig = await sql`
+        const newConfig = await sqlQuery<any>(sql`
           INSERT INTO "ticketConfig" (
             "storeId", "ticketType", header, description, "logoUrl", footer,
             "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint"
@@ -104,7 +104,7 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
             id, "storeId", "ticketType", header, description, "logoUrl", footer,
             "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
             "createdAt", "updatedAt"
-        `
+        `)
 
         return {
           success: true,
@@ -182,7 +182,7 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
           "createdAt", "updatedAt"
       `
 
-      const updated = await sql.unsafe(query, values)
+      const updated = await sqlUnsafe<any>(query, values)
 
       return {
         success: true,
