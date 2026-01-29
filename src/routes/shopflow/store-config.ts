@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
 
 export type StoreConfig = {
   id: string
@@ -22,7 +22,7 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/store-config - Get store configuration
   fastify.get('/api/shopflow/store-config', async (request, reply) => {
     try {
-      const config = await sql`
+      const config = await sqlQuery<any>(sql`
         SELECT 
           id, name, address, phone, email, "taxId", currency, "taxRate", 
           "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
@@ -30,11 +30,11 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
         FROM "storeConfig"
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       if (config.length === 0) {
         // Create default config if none exists
-        const defaultConfig = await sql`
+        const defaultConfig = await sqlQuery<any>(sql`
           INSERT INTO "storeConfig" (
             name, currency, "taxRate", "lowStockAlert", "invoicePrefix", 
             "invoiceNumber", "allowSalesWithoutStock"
@@ -46,7 +46,7 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
             id, name, address, phone, email, "taxId", currency, "taxRate", 
             "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
             "createdAt", "updatedAt"
-        `
+        `)
 
         return {
           success: true,
@@ -87,15 +87,15 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
       } = request.body
 
       // Get current config
-      const current = await sql`
+      const current = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM "storeConfig"
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       if (current.length === 0) {
         // Create if doesn't exist
-        const newConfig = await sql`
+        const newConfig = await sqlQuery<any>(sql`
           INSERT INTO "storeConfig" (
             name, address, phone, email, "taxId", currency, "taxRate", 
             "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock"
@@ -109,7 +109,7 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
             id, name, address, phone, email, "taxId", currency, "taxRate", 
             "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
             "createdAt", "updatedAt"
-        `
+        `)
 
         return {
           success: true,
@@ -183,7 +183,7 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
           "createdAt", "updatedAt"
       `
 
-      const updated = await sql.unsafe(query, values)
+      const updated = await sqlUnsafe<any>(query, values)
 
       return {
         success: true,
@@ -204,12 +204,12 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/store-config/next-invoice-number - Get next invoice number
   fastify.post('/api/shopflow/store-config/next-invoice-number', async (request, reply) => {
     try {
-      const config = await sql`
+      const config = await sqlQuery<any>(sql`
         SELECT "invoicePrefix", "invoiceNumber"
         FROM "storeConfig"
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       if (config.length === 0) {
         reply.code(404)
@@ -220,7 +220,7 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
       }
 
       // Increment invoice number
-      const updated = await sql`
+      const updated = await sqlQuery<any>(sql`
         UPDATE "storeConfig"
         SET "invoiceNumber" = "invoiceNumber" + 1,
             "updatedAt" = NOW()
@@ -228,7 +228,7 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
           SELECT id FROM "storeConfig" ORDER BY "createdAt" DESC LIMIT 1
         )
         RETURNING "invoicePrefix", "invoiceNumber"
-      `
+      `)
 
       const invoiceNumber = `${updated[0].invoicePrefix}${updated[0].invoiceNumber.toString().padStart(6, '0')}`
 

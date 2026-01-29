@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
 
 export type Supplier = {
   id: string
@@ -68,7 +68,7 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
           ORDER BY s.name ASC
         `
 
-        const suppliers = await query
+        const suppliers = await sqlQuery<any>(query)
 
         return {
           success: true,
@@ -110,7 +110,7 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params
 
-      const supplier = await sql`
+      const supplier = await sqlQuery<any>(sql`
         SELECT 
           s.id,
           s.name,
@@ -129,7 +129,7 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
         FROM suppliers s
         WHERE s.id = ${id}
         LIMIT 1
-      `
+      `)
 
       if (supplier.length === 0) {
         reply.code(404)
@@ -140,20 +140,20 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
       }
 
       // Get products
-      const products = await sql`
+      const products = await sqlQuery<any>(sql`
         SELECT 
           id, name, sku, price, stock
         FROM products
         WHERE "supplierId" = ${id}
         ORDER BY name ASC
-      `
+      `)
 
       // Get products count
-      const productsCount = await sql`
+      const productsCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM products
         WHERE "supplierId" = ${id}
-      `
+      `)
 
       return {
         success: true,
@@ -161,7 +161,7 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
           ...supplier[0],
           products: products,
           _count: {
-            products: parseInt(productsCount[0].count) || 0,
+            products: parseInt(productsCount[0]?.count || '0'),
           },
         },
       }
@@ -183,7 +183,7 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
       const { name, email, phone, address, city, state, postalCode, country, taxId, notes, active } =
         request.body
 
-      const supplier = await sql`
+      const supplier = await sqlQuery<any>(sql`
         INSERT INTO suppliers (
           name, email, phone, address, city, state, "postalCode", country, "taxId", notes, active
         )
@@ -192,21 +192,21 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
         )
         RETURNING 
           id, name, email, phone, address, city, state, "postalCode", country, "taxId", notes, active, "createdAt", "updatedAt"
-      `
+      `)
 
       // Get products count
-      const productsCount = await sql`
+      const productsCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM products
         WHERE "supplierId" = ${supplier[0].id}
-      `
+      `)
 
       return {
         success: true,
         data: {
           ...supplier[0],
           _count: {
-            products: parseInt(productsCount[0].count) || 0,
+            products: parseInt(productsCount[0]?.count || '0'),
           },
         },
       }
@@ -232,9 +232,9 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
           request.body
 
         // Check if supplier exists
-        const existing = await sql`
+        const existing = await sqlQuery<{ id: string }>(sql`
           SELECT id FROM suppliers WHERE id = ${id} LIMIT 1
-        `
+        `)
 
         if (existing.length === 0) {
           reply.code(404)
@@ -311,21 +311,21 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
           RETURNING id, name, email, phone, address, city, state, "postalCode", country, "taxId", notes, active, "createdAt", "updatedAt"
         `
 
-        const supplier = await sql.unsafe(query, values)
+        const supplier = await sqlUnsafe<any>(query, values)
 
         // Get products count
-        const productsCount = await sql`
+        const productsCount = await sqlQuery<{ count: string }>(sql`
           SELECT COUNT(*) as count
           FROM products
           WHERE "supplierId" = ${id}
-        `
+        `)
 
         return {
           success: true,
           data: {
             ...supplier[0],
             _count: {
-              products: parseInt(productsCount[0].count) || 0,
+              products: parseInt(productsCount[0]?.count || '0'),
             },
           },
         }
@@ -348,9 +348,9 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
       const { id } = request.params
 
       // Check if supplier exists
-      const existing = await sql`
+      const existing = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM suppliers WHERE id = ${id} LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -361,13 +361,13 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
       }
 
       // Check if supplier has products
-      const productsCount = await sql`
+      const productsCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM products
         WHERE "supplierId" = ${id}
-      `
+      `)
 
-      if (parseInt(productsCount[0].count) > 0) {
+      if (parseInt(productsCount[0]?.count || '0') > 0) {
         reply.code(400)
         return {
           success: false,
