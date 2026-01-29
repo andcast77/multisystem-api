@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import env from '@fastify/env'
 import { registerRoutes } from './routes/index.js'
+import { existsSync } from 'fs'
 
 const fastify = Fastify({ logger: true })
 
@@ -31,9 +32,11 @@ const envSchema = {
 async function start() {
   try {
     // Registrar y validar variables de entorno
+    // dotenv solo si existe el archivo .env (desarrollo), en producción usa process.env directamente
+    const useDotenv = existsSync('.env')
     await fastify.register(env, {
       schema: envSchema,
-      dotenv: true
+      dotenv: useDotenv
     })
 
     // Obtener configuración validada (disponible después de registrar @fastify/env)
