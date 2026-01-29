@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe, type User } from '../db/neon.js'
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 
 export async function usersRoutes(fastify: FastifyInstance) {
   // GET /api/users - Obtener todos los usuarios
