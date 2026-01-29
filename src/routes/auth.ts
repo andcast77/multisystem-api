@@ -16,7 +16,7 @@ function generateToken(user: Pick<User, 'id' | 'email' | 'role'>): string {
     },
     JWT_SECRET,
     {
-      expiresIn: JWT_EXPIRES_IN,
+      expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
     }
   )
 }
