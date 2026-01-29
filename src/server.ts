@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import env from '@fastify/env'
-import { registerRoutes } from './routes'
+import { registerRoutes } from './routes/index.js'
 
 const fastify = Fastify({ logger: true })
 
