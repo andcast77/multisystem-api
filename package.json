@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "test:endpoints": "node scripts/test-endpoints.js"
+    "test:endpoints": "node scripts/test-endpoints.js",
+    "test:api": "node test-api.js"
   },
   "dependencies": {
     "fastify": "^4.24.3",

@@ -1,10 +1,19 @@
 import { FastifyInstance } from 'fastify'
 
-const DATABASE_API_URL = process.env.DATABASE_API_URL || 'http://database:3001'
+const DATABASE_API_URL = process.env.DATABASE_API_URL
 
 export async function usersRoutes(fastify: FastifyInstance) {
   // GET /api/users - Obtener todos los usuarios (hace request HTTP al servicio database)
   fastify.get('/api/users', async (request, reply) => {
+    if (!DATABASE_API_URL) {
+      reply.code(503)
+      return {
+        success: false,
+        error: 'DATABASE_API_URL no está configurada',
+        message: 'El servicio de base de datos no está disponible. Configura DATABASE_API_URL en las variables de entorno.',
+      }
+    }
+
     try {
       const response = await fetch(`${DATABASE_API_URL}/users`, {
         method: 'GET',
@@ -36,6 +45,15 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
   // GET /api/users/:id - Obtener un usuario por ID (hace request HTTP al servicio database)
   fastify.get<{ Params: { id: string } }>('/api/users/:id', async (request, reply) => {
+    if (!DATABASE_API_URL) {
+      reply.code(503)
+      return {
+        success: false,
+        error: 'DATABASE_API_URL no está configurada',
+        message: 'El servicio de base de datos no está disponible. Configura DATABASE_API_URL en las variables de entorno.',
+      }
+    }
+
     try {
       const { id } = request.params
 
