@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery } from '../../db/neon.js'
 
 export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/action-history - Log an action
@@ -25,7 +25,7 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const result = await sql`
+      const result = await sqlQuery(sql`
         INSERT INTO "actionHistory" (
           id,
           "userId",
@@ -47,11 +47,11 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
           ${userAgent || null}
         )
         RETURNING id
-      `
+      `)
 
       return {
         success: true,
-        data: { id: result[0].id },
+        data: { id: result[0]?.id },
       }
     } catch (error) {
       fastify.log.error(error)
@@ -151,8 +151,8 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
           ${endDate ? sql`AND ah."createdAt" <= ${new Date(endDate)}` : sql``}
       `
 
-      const countResult = await countQuery
-      const total = parseInt((countResult[0] as { total: string }).total || '0')
+      const countResult = await sqlQuery(countQuery)
+      const total = parseInt((countResult[0] as { total: string })?.total || '0')
 
       // Get paginated results
       query = sql`
@@ -161,7 +161,7 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
         LIMIT ${limitNum} OFFSET ${skip}
       `
 
-      const results = await query
+      const results = await sqlQuery(query)
 
       const actions = results.map((row: any) => ({
         id: row.id,

@@ -59,7 +59,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
           ORDER BY c.name ASC
         `
 
-        const categories = await query
+        const categories = await sqlQuery(query)
 
         const result = categories.map((c: any) => {
           const category: any = {

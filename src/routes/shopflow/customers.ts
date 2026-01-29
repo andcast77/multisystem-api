@@ -65,7 +65,7 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
           ORDER BY c.name ASC
         `
 
-        const customers = await query
+        const customers = await sqlQuery(query)
 
         return {
           success: true,
