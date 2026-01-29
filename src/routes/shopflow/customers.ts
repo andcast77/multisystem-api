@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
 
 export type Customer = {
   id: string
@@ -104,7 +104,7 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params
 
-      const customer = await sql`
+      const customer = await sqlQuery<any>(sql`
         SELECT 
           c.id,
           c.name,
@@ -120,7 +120,7 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
         FROM customers c
         WHERE c.id = ${id}
         LIMIT 1
-      `
+      `)
 
       if (customer.length === 0) {
         reply.code(404)
@@ -131,14 +131,14 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
       }
 
       // Get sales count
-      const salesCount = await sql`
+      const salesCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM sales
         WHERE "customerId" = ${id}
-      `
+      `)
 
       // Get last 10 sales
-      const sales = await sql`
+      const sales = await sqlQuery<any>(sql`
         SELECT 
           id,
           "invoiceNumber",
@@ -149,14 +149,14 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
         WHERE "customerId" = ${id}
         ORDER BY "createdAt" DESC
         LIMIT 10
-      `
+      `)
 
       return {
         success: true,
         data: {
           ...customer[0],
           _count: {
-            sales: parseInt(salesCount[0].count) || 0,
+            sales: parseInt(salesCount[0]?.count || '0'),
           },
           sales: sales.map((s: any) => ({
             id: s.id,
@@ -184,7 +184,7 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
     try {
       const { name, email, phone, address, city, state, postalCode, country } = request.body
 
-      const customer = await sql`
+      const customer = await sqlQuery<any>(sql`
         INSERT INTO customers (
           name, email, phone, address, city, state, "postalCode", country
         )
@@ -193,21 +193,21 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
         )
         RETURNING 
           id, name, email, phone, address, city, state, "postalCode", country, "createdAt", "updatedAt"
-      `
+      `)
 
       // Get sales count
-      const salesCount = await sql`
+      const salesCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM sales
         WHERE "customerId" = ${customer[0].id}
-      `
+      `)
 
       return {
         success: true,
         data: {
           ...customer[0],
           _count: {
-            sales: parseInt(salesCount[0].count) || 0,
+            sales: parseInt(salesCount[0]?.count || '0'),
           },
         },
       }
@@ -232,9 +232,9 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
         const { name, email, phone, address, city, state, postalCode, country } = request.body
 
         // Check if customer exists
-        const existing = await sql`
+        const existing = await sqlQuery<{ id: string }>(sql`
           SELECT id FROM customers WHERE id = ${id} LIMIT 1
-        `
+        `)
 
         if (existing.length === 0) {
           reply.code(404)
@@ -299,21 +299,21 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
           RETURNING id, name, email, phone, address, city, state, "postalCode", country, "createdAt", "updatedAt"
         `
 
-        const customer = await sql.unsafe(query, values)
+        const customer = await sqlUnsafe<any>(query, values)
 
         // Get sales count
-        const salesCount = await sql`
+        const salesCount = await sqlQuery<{ count: string }>(sql`
           SELECT COUNT(*) as count
           FROM sales
           WHERE "customerId" = ${id}
-        `
+        `)
 
         return {
           success: true,
           data: {
             ...customer[0],
             _count: {
-              sales: parseInt(salesCount[0].count) || 0,
+              sales: parseInt(salesCount[0]?.count || '0'),
             },
           },
         }
@@ -336,9 +336,9 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
       const { id } = request.params
 
       // Check if customer exists
-      const existing = await sql`
+      const existing = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM customers WHERE id = ${id} LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -349,13 +349,13 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
       }
 
       // Check if customer has sales
-      const salesCount = await sql`
+      const salesCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM sales
         WHERE "customerId" = ${id}
-      `
+      `)
 
-      if (parseInt(salesCount[0].count) > 0) {
+      if (parseInt(salesCount[0]?.count || '0') > 0) {
         reply.code(400)
         return {
           success: false,
@@ -363,7 +363,7 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
         }
       }
 
-      await sql`DELETE FROM customers WHERE id = ${id}`
+      await sqlQuery(sql`DELETE FROM customers WHERE id = ${id}`)
 
       return {
         success: true,
