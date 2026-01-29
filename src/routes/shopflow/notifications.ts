@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery } from '../../db/neon.js'
 
 export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/notifications - Create notification
@@ -26,7 +26,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const result = await sql`
+      const result = await sqlQuery(sql`
         INSERT INTO notifications (
           id,
           "userId",
@@ -65,7 +65,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
           "readAt",
           "createdAt",
           "updatedAt"
-      `
+      `)
 
       const notification = result[0] as any
       return {
@@ -165,8 +165,8 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
           AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
       `
 
-      const countResult = await countQuery
-      const total = parseInt((countResult[0] as { total: string }).total || '0')
+      const countResult = await sqlQuery(countQuery)
+      const total = parseInt((countResult[0] as { total: string })?.total || '0')
 
       // Get paginated results
       query = sql`
@@ -175,7 +175,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         LIMIT ${limitNum} OFFSET ${skip}
       `
 
-      const results = await query
+      const results = await sqlQuery(query)
 
       const notifications = results.map((row: any) => ({
         ...row,
@@ -226,12 +226,12 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       }
 
       // Check if notification exists and belongs to user
-      const existing = await sql`
+      const existing = await sqlQuery(sql`
         SELECT id, "userId"
         FROM notifications
         WHERE id = ${id}
         LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -291,12 +291,12 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       }
 
       // Check if notification exists and belongs to user
-      const existing = await sql`
+      const existing = await sqlQuery(sql`
         SELECT id, "userId"
         FROM notifications
         WHERE id = ${id}
         LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -353,13 +353,13 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const result = await sql`
+      const result = await sqlQuery(sql`
         UPDATE notifications
         SET status = 'READ', "readAt" = NOW()
         WHERE "userId" = ${userId}
           AND status = 'UNREAD'
         RETURNING id
-      `
+      `)
 
       return {
         success: true,
@@ -397,12 +397,12 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       }
 
       // Check if notification exists and belongs to user
-      const existing = await sql`
+      const existing = await sqlQuery(sql`
         SELECT id, "userId"
         FROM notifications
         WHERE id = ${id}
         LIMIT 1
-      `
+      `)
 
       if (existing.length === 0) {
         reply.code(404)
@@ -455,15 +455,15 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const result = await sql`
+      const result = await sqlQuery(sql`
         SELECT COUNT(*) as count
         FROM notifications
         WHERE "userId" = ${userId}
           AND status = 'UNREAD'
           AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
-      `
+      `)
 
-      const count = parseInt((result[0] as { count: string }).count || '0')
+      const count = parseInt((result[0] as { count: string })?.count || '0')
 
       return {
         success: true,
@@ -488,16 +488,16 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     try {
       const { userId } = request.params
 
-      let preferences = await sql`
+      let preferences = await sqlQuery(sql`
         SELECT *
         FROM "notificationPreferences"
         WHERE "userId" = ${userId}
         LIMIT 1
-      `
+      `)
 
       // Create default preferences if none exist
       if (preferences.length === 0) {
-        const result = await sql`
+        const result = await sqlQuery(sql`
           INSERT INTO "notificationPreferences" (
             id,
             "userId",
@@ -513,7 +513,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
             false
           )
           RETURNING *
-        `
+        `)
         preferences = result
       }
 

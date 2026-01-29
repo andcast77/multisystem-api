@@ -22,6 +22,10 @@ export const sql = ((strings: TemplateStringsArray, ...values: any[]) => {
 // Helper function to ensure SQL results are treated as arrays
 export async function sqlQuery<T = any>(query: Promise<any>): Promise<T[]> {
   const result = await query
+  // Handle FullQueryResults type (has .rows property)
+  if (result && typeof result === 'object' && 'rows' in result && Array.isArray(result.rows)) {
+    return result.rows as T[]
+  }
   // Ensure result is always an array
   if (Array.isArray(result)) {
     return result as T[]

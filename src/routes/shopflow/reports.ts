@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery } from '../../db/neon.js'
 
 export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/stats - Sales statistics with date filters
@@ -30,7 +30,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         query = sql`${query} AND "createdAt" <= ${new Date(endDate)}`
       }
 
-      const result = await query
+      const result = await sqlQuery(query)
       const stats = result[0] as {
         salesCount: string
         totalRevenue: string
@@ -292,7 +292,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         minStock: number | null
       }>
 
-      const stats = (await sql`
+      const statsResult = await sqlQuery(sql`
         SELECT 
           COUNT(*) as "totalProducts",
           COUNT(CASE WHEN stock <= COALESCE("minStock", 0) THEN 1 END) as "lowStockProducts",
@@ -301,13 +301,14 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           COALESCE(SUM(stock * price), 0) as "totalRetailValue"
         FROM products
         WHERE active = true
-      `) as Array<{
+      `)
+      const stats = statsResult[0] as {
         totalProducts: string
         lowStockProducts: string
         outOfStockProducts: string
         totalValue: string
         totalRetailValue: string
-      }>[0]
+      }
 
       return {
         success: true,

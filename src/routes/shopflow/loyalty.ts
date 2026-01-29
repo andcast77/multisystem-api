@@ -1,11 +1,11 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../../db/neon.js'
+import { sql, sqlQuery } from '../../db/neon.js'
 
 export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/loyalty/config - Get loyalty configuration
   fastify.get('/api/shopflow/loyalty/config', async (request, reply) => {
     try {
-      const config = await sql`
+      const config = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase", active
@@ -13,7 +13,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         WHERE active = true
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       if (config.length === 0) {
         // Return default config
@@ -68,7 +68,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         request.body
 
       // Get current config
-      const current = await sql`
+      const current = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase"
@@ -76,7 +76,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         WHERE active = true
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       const currentConfig = current.length > 0 ? current[0] : {
         pointsPerDollar: 1.0,
@@ -87,7 +87,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       }
 
       // Create new config (versioning)
-      const newConfig = await sql`
+      const newConfig = await sqlQuery(sql`
         INSERT INTO "loyaltyConfig" (
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase", active
@@ -101,16 +101,18 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           true
         )
         RETURNING 
-          "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
+          id, "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase"
-      `
+      `)
 
       // Deactivate old configs
-      await sql`
-        UPDATE "loyaltyConfig"
-        SET active = false
-        WHERE id != ${newConfig[0].id} AND active = true
-      `
+      if (newConfig.length > 0) {
+        await sql`
+          UPDATE "loyaltyConfig"
+          SET active = false
+          WHERE id != ${newConfig[0].id} AND active = true
+        `
+      }
 
       return {
         success: true,
@@ -144,9 +146,9 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         const { customerId } = request.params
 
         // Check customer exists
-        const customer = await sql`
+        const customer = await sqlQuery(sql`
           SELECT id, name FROM customers WHERE id = ${customerId} LIMIT 1
-        `
+        `)
 
         if (customer.length === 0) {
           reply.code(404)
@@ -157,13 +159,13 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         }
 
         // Get all points transactions
-        const transactions = await sql`
+        const transactions = await sqlQuery(sql`
           SELECT 
             id, points, type, description, "saleId", "expiresAt", "createdAt"
           FROM "loyaltyPoints"
           WHERE "customerId" = ${customerId}
           ORDER BY "createdAt" DESC
-        `
+        `)
 
         const now = new Date()
         const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
@@ -240,14 +242,14 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       const { customerId, purchaseAmount, saleId } = request.body
 
       // Get loyalty config
-      const config = await sql`
+      const config = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "minPurchaseForPoints", "maxPointsPerPurchase", "pointsExpireMonths"
         FROM "loyaltyConfig"
         WHERE active = true
         ORDER BY "createdAt" DESC
         LIMIT 1
-      `
+      `)
 
       if (config.length === 0) {
         return {
@@ -293,7 +295,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       }
 
       // Create points transaction
-      const transaction = await sql`
+      const transaction = await sqlQuery(sql`
         INSERT INTO "loyaltyPoints" (
           "customerId", type, points, description, "saleId", "expiresAt", balance
         )
@@ -302,11 +304,11 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           ${`Points earned from purchase #${saleId}`}, ${saleId}, ${expiresAt}, 0
         )
         RETURNING id, points
-      `
+      `)
 
       return {
         success: true,
-        data: { pointsAwarded: parseInt(transaction[0].points) },
+        data: { pointsAwarded: transaction.length > 0 ? parseInt(transaction[0].points) : 0 },
       }
     } catch (error) {
       fastify.log.error(error)

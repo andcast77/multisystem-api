@@ -104,9 +104,33 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         query = sql`${query} AND s."createdAt" <= ${new Date(endDate)}`
       }
 
-      // Get total count for pagination
-      const countQuery = query.replace(/SELECT.*FROM/, 'SELECT COUNT(*) as total FROM')
-      const countResult = await sqlUnsafe<{ total: string }>(countQuery.replace(/ORDER BY.*/, ''))
+      // Get total count for pagination - build count query separately
+      let countQuery = sql`
+        SELECT COUNT(*) as total
+        FROM sales s
+        WHERE 1=1
+      `
+      
+      if (customerId) {
+        countQuery = sql`${countQuery} AND s."customerId" = ${customerId}`
+      }
+      if (userId) {
+        countQuery = sql`${countQuery} AND s."userId" = ${userId}`
+      }
+      if (status) {
+        countQuery = sql`${countQuery} AND s.status = ${status}`
+      }
+      if (paymentMethod) {
+        countQuery = sql`${countQuery} AND s."paymentMethod" = ${paymentMethod}`
+      }
+      if (startDate) {
+        countQuery = sql`${countQuery} AND s."createdAt" >= ${new Date(startDate)}`
+      }
+      if (endDate) {
+        countQuery = sql`${countQuery} AND s."createdAt" <= ${new Date(endDate)}`
+      }
+      
+      const countResult = await sqlQuery<{ total: string }>(countQuery)
       const total = parseInt(countResult[0]?.total || '0')
 
       // Get paginated results
