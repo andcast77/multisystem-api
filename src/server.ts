@@ -1,14 +1,14 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import env from '@fastify/env'
-import { registerRoutes } from './routes/index.js'
+import { registerRoutes } from './routes'
 
 const fastify = Fastify({ logger: true })
 
 // Esquema de variables de entorno
 const envSchema = {
   type: 'object',
-  required: [],
+  required: ['DATABASE_URL'],
   properties: {
     PORT: {
       type: 'string',
@@ -40,7 +40,7 @@ async function start() {
     const config = (fastify as any).config as {
       PORT: string
       CORS_ORIGIN: string
-      DATABASE_URL?: string
+      DATABASE_URL: string
       NODE_ENV: string
     }
 

@@ -2,7 +2,6 @@
   "name": "@multisystem/api",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
@@ -13,13 +12,13 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "test:endpoints": "node scripts/test-endpoints.js",
-    "test:api": "node test-api.js"
+    "test:endpoints": "node scripts/test-endpoints.js"
   },
   "dependencies": {
     "fastify": "^4.24.3",
     "@fastify/cors": "^8.4.0",
-    "@fastify/env": "^4.2.0"
+    "@fastify/env": "^4.2.0",
+    "@neondatabase/serverless": "^1.0.2"
   },
   "devDependencies": {
     "@types/node": "20",
