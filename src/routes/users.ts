@@ -5,7 +5,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
   // GET /api/users - Obtener todos los usuarios
   fastify.get('/api/users', async (request, reply) => {
     try {
-      const users = await sql<User[]>`
+      const users = (await sql`
         SELECT 
           id,
           email,
@@ -17,7 +17,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
         FROM users
         WHERE active = true
         ORDER BY "createdAt" DESC
-      `
+      `) as User[]
 
       return {
         success: true,
@@ -39,7 +39,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params
 
-      const users = await sql<User[]>`
+      const users = (await sql`
         SELECT 
           id,
           email,
@@ -51,7 +51,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
         FROM users
         WHERE id = ${id}
         LIMIT 1
-      `
+      `) as User[]
 
       if (users.length === 0) {
         reply.code(404)
