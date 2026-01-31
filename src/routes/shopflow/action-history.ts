@@ -106,7 +106,7 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
           ah."userAgent",
           ah."createdAt",
           u.id as "user.id",
-          u.name as "user.name",
+          u.email as "user.name",
           u.email as "user.email",
           u.role as "user.role"
         FROM "actionHistory" ah

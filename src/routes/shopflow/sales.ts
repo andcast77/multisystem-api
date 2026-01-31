@@ -157,7 +157,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
 
           // Get user
           const user = await sqlQuery<any>(sql`
-            SELECT id, name, email
+            SELECT id, email
             FROM users
             WHERE id = ${sale.userId}
             LIMIT 1
@@ -273,7 +273,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
 
       // Get user
       const user = await sqlQuery<any>(sql`
-        SELECT id, name, email
+        SELECT id, email
         FROM users
         WHERE id = ${sale[0].userId}
         LIMIT 1
@@ -515,7 +515,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       const customer = sale[0].customerId
         ? await sqlQuery<any>(sql`SELECT id, name, email, phone FROM customers WHERE id = ${sale[0].customerId} LIMIT 1`)
         : []
-      const user = await sqlQuery<any>(sql`SELECT id, name, email FROM users WHERE id = ${sale[0].userId} LIMIT 1`)
+      const user = await sqlQuery<any>(sql`SELECT id, email FROM users WHERE id = ${sale[0].userId} LIMIT 1`)
 
       // Get items
       const saleItemsData = await sqlQuery<any>(sql`

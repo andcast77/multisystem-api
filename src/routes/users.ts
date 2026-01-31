@@ -1,28 +1,29 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery, sqlUnsafe, type User } from '../db/neon.js'
+import { sql, sqlQuery, sqlUnsafe, type User, userDisplayName } from '../db/neon.js'
 import bcrypt from 'bcryptjs'
 
 export async function usersRoutes(fastify: FastifyInstance) {
-  // GET /api/users - Obtener todos los usuarios
+  // GET /api/users - Obtener todos los usuarios (schema: firstName, lastName, isActive)
   fastify.get('/api/users', async (request, reply) => {
     try {
       const users = await sqlQuery<User>(sql`
         SELECT 
           id,
           email,
-          name,
+          "firstName",
+          "lastName",
           role,
-          active,
+          "isActive",
           "createdAt",
           "updatedAt"
         FROM users
-        WHERE active = true
+        WHERE "isActive" = true
         ORDER BY "createdAt" DESC
       `)
 
       return {
         success: true,
-        data: users,
+        data: users.map((u) => ({ ...u, name: userDisplayName(u) })),
       }
     } catch (error) {
       fastify.log.error(error)
@@ -47,9 +48,10 @@ export async function usersRoutes(fastify: FastifyInstance) {
         SELECT 
           id,
           email,
-          name,
+          "firstName",
+          "lastName",
           role,
-          active,
+          "isActive",
           "createdAt",
           "updatedAt"
         FROM users
@@ -67,7 +69,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       return {
         success: true,
-        data: users[0],
+        data: { ...users[0], name: userDisplayName(users[0]) },
       }
     } catch (error) {
       fastify.log.error(error)
@@ -83,18 +85,19 @@ export async function usersRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /api/users - Create user
+  // POST /api/users - Create user (schema: firstName, lastName, isActive)
   fastify.post<{
     Body: {
       email: string
       password: string
-      name?: string
+      firstName?: string
+      lastName?: string
       role?: string
-      active?: boolean
+      isActive?: boolean
     }
   }>('/api/users', async (request, reply) => {
     try {
-      const { email, password, name, role, active } = request.body
+      const { email, password, firstName, lastName, role, isActive } = request.body
 
       // Check if user already exists
       const existing = await sqlQuery<{ id: string }>(sql`
@@ -113,14 +116,14 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const hashedPassword = await bcrypt.hash(password, 10)
 
       const user = await sqlQuery<User>(sql`
-        INSERT INTO users (email, password, name, role, active)
-        VALUES (${email}, ${hashedPassword}, ${name}, ${role || 'USER'}, ${active ?? true})
-        RETURNING id, email, name, role, active, "createdAt", "updatedAt"
+        INSERT INTO users (email, password, "firstName", "lastName", role, "isActive")
+        VALUES (${email}, ${hashedPassword}, ${firstName ?? ''}, ${lastName ?? ''}, ${role || 'USER'}, ${isActive ?? true})
+        RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
       `)
 
       return {
         success: true,
-        data: user[0],
+        data: { ...user[0], name: userDisplayName(user[0]) },
       }
     } catch (error) {
       fastify.log.error(error)
@@ -134,20 +137,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // PUT /api/users/:id - Update user
+  // PUT /api/users/:id - Update user (schema: firstName, lastName, isActive)
   fastify.put<{
     Params: { id: string }
     Body: {
       email?: string
       password?: string
-      name?: string
+      firstName?: string
+      lastName?: string
       role?: string
-      active?: boolean
+      isActive?: boolean
     }
   }>('/api/users/:id', async (request, reply) => {
     try {
       const { id } = request.params
-      const { email, password, name, role, active } = request.body
+      const { email, password, firstName, lastName, role, isActive } = request.body
 
       // Check if user exists
       const existing = await sqlQuery<{ id: string; email: string }>(sql`
@@ -189,17 +193,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
         updates.push(`password = $${values.length + 1}`)
         values.push(hashedPassword)
       }
-      if (name !== undefined) {
-        updates.push(`name = $${values.length + 1}`)
-        values.push(name)
+      if (firstName !== undefined) {
+        updates.push(`"firstName" = $${values.length + 1}`)
+        values.push(firstName)
+      }
+      if (lastName !== undefined) {
+        updates.push(`"lastName" = $${values.length + 1}`)
+        values.push(lastName)
       }
       if (role !== undefined) {
         updates.push(`role = $${values.length + 1}`)
         values.push(role)
       }
-      if (active !== undefined) {
-        updates.push(`active = $${values.length + 1}`)
-        values.push(active)
+      if (isActive !== undefined) {
+        updates.push(`"isActive" = $${values.length + 1}`)
+        values.push(isActive)
       }
 
       if (updates.length === 0) {
@@ -217,14 +225,14 @@ export async function usersRoutes(fastify: FastifyInstance) {
         UPDATE users 
         SET ${updates.join(', ')}
         WHERE id = $${values.length}
-        RETURNING id, email, name, role, active, "createdAt", "updatedAt"
+        RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
       `
 
       const updated = await sqlUnsafe<User>(query, values)
 
       return {
         success: true,
-        data: updated[0],
+        data: updated[0] ? { ...updated[0], name: userDisplayName(updated[0]) } : updated[0],
       }
     } catch (error) {
       fastify.log.error(error)

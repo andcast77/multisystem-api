@@ -13,6 +13,11 @@ import { shopflowLoyaltyRoutes } from './shopflow/loyalty.js'
 import { shopflowReportsRoutes } from './shopflow/reports.js'
 import { shopflowActionHistoryRoutes } from './shopflow/action-history.js'
 import { shopflowNotificationsRoutes } from './shopflow/notifications.js'
+import { shopflowProductsRoutes } from './shopflow/products.js'
+import { shopflowStoresRoutes } from './shopflow/stores.js'
+import { shopflowExportRoutes } from './shopflow/export.js'
+import { shopflowInventoryTransfersRoutes } from './shopflow/inventory-transfers.js'
+import { shopflowPushSubscriptionsRoutes } from './shopflow/push-subscriptions.js'
 
 export async function registerRoutes(fastify: FastifyInstance) {
   // Ruta raíz - información de la API
@@ -80,4 +85,9 @@ export async function registerRoutes(fastify: FastifyInstance) {
   await fastify.register(shopflowReportsRoutes)
   await fastify.register(shopflowActionHistoryRoutes)
   await fastify.register(shopflowNotificationsRoutes)
+  await fastify.register(shopflowProductsRoutes)
+  await fastify.register(shopflowStoresRoutes)
+  await fastify.register(shopflowExportRoutes)
+  await fastify.register(shopflowInventoryTransfersRoutes)
+  await fastify.register(shopflowPushSubscriptionsRoutes)
 }

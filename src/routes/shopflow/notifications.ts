@@ -532,4 +532,55 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       }
     }
   })
+
+  // Alias: GET /api/shopflow/users/:userId/notification-preferences (frontend expects this path)
+  fastify.get<{
+    Params: { userId: string }
+  }>('/api/shopflow/users/:userId/notification-preferences', async (request, reply) => {
+    try {
+      const { userId } = request.params
+
+      let preferences = await sqlQuery(sql`
+        SELECT *
+        FROM "notificationPreferences"
+        WHERE "userId" = ${userId}
+        LIMIT 1
+      `)
+
+      if (preferences.length === 0) {
+        const result = await sqlQuery(sql`
+          INSERT INTO "notificationPreferences" (
+            id,
+            "userId",
+            "emailEnabled",
+            "inAppEnabled",
+            "pushEnabled"
+          )
+          VALUES (
+            gen_random_uuid(),
+            ${userId},
+            true,
+            true,
+            false
+          )
+          RETURNING *
+        `)
+        preferences = result
+      }
+
+      return {
+        success: true,
+        data: preferences[0],
+      }
+    } catch (error) {
+      fastify.log.error(error)
+      reply.code(500)
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+      return {
+        success: false,
+        error: 'Error al obtener preferencias de notificaciones',
+        message: errorMessage,
+      }
+    }
+  })
 }

@@ -524,11 +524,11 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
 
       // Get user info
       const users = (await sql`
-        SELECT id, name, email
+        SELECT id, email
         FROM users
         WHERE id = ${userId}
         LIMIT 1
-      `) as Array<{ id: string; name: string | null; email: string }>
+      `) as Array<{ id: string; email: string }>
 
       if (users.length === 0) {
         reply.code(404)
@@ -571,7 +571,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         success: true,
         data: {
           userId: user.id,
-          userName: user.name,
+          userName: (user as any).name ?? user.email,
           userEmail: user.email,
           salesCount,
           totalRevenue,

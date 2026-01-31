@@ -44,13 +44,23 @@ export async function sqlUnsafe<T = any>(query: string, values?: any[]): Promise
   return result ? [result] as T[] : []
 }
 
-// Helper para tipado de resultados
+// Helper para tipado de resultados (columnas según Prisma schema: firstName, lastName, isActive)
 export type User = {
   id: string
   email: string
-  name: string | null
+  firstName: string
+  lastName: string
   role: 'USER' | 'ADMIN' | 'SUPERADMIN'
-  active: boolean
+  isActive: boolean
   createdAt: Date
   updatedAt: Date
+}
+
+/** Nombre para respuestas API (firstName + lastName o email) */
+export function userDisplayName(user: { firstName?: string; lastName?: string; email: string }): string {
+  if (user.firstName != null && user.lastName != null) {
+    const n = `${user.firstName} ${user.lastName}`.trim()
+    if (n) return n
+  }
+  return user.email
 }
