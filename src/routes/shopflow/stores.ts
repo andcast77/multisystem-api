@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export type Store = {
   id: string
@@ -20,12 +21,14 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
     '/api/shopflow/stores',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { includeInactive } = request.query
 
         let query = sql`
-          SELECT id, name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+          SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
           FROM stores
-          WHERE 1=1
+          WHERE "companyId" = ${ctx.companyId}
         `
         if (includeInactive !== 'true') {
           query = sql`${query} AND active = true`
@@ -52,11 +55,13 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
     '/api/shopflow/stores/by-code/:code',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { code } = request.params
         const rows = await sqlQuery<any>(sql`
-          SELECT id, name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+          SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
           FROM stores
-          WHERE code = ${decodeURIComponent(code)}
+          WHERE "companyId" = ${ctx.companyId} AND code = ${decodeURIComponent(code)}
           LIMIT 1
         `)
         if (rows.length === 0) {
@@ -80,11 +85,13 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/stores/:id
   fastify.get<{ Params: { id: string } }>('/api/shopflow/stores/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const rows = await sqlQuery<any>(sql`
-        SELECT id, name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+        SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
         FROM stores
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         LIMIT 1
       `)
       if (rows.length === 0) {
@@ -116,11 +123,13 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/stores', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { name, code, address, phone, email, taxId } = request.body
       const store = await sqlQuery<any>(sql`
-        INSERT INTO stores (name, code, address, phone, email, "taxId")
-        VALUES (${name}, ${code}, ${address ?? null}, ${phone ?? null}, ${email ?? null}, ${taxId ?? null})
-        RETURNING id, name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+        INSERT INTO stores ("companyId", name, code, address, phone, email, "taxId")
+        VALUES (${ctx.companyId}, ${name}, ${code}, ${address ?? null}, ${phone ?? null}, ${email ?? null}, ${taxId ?? null})
+        RETURNING id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
       `)
       return { success: true, data: store[0] }
     } catch (error: any) {
@@ -153,11 +162,13 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
     }>
   }>('/api/shopflow/stores/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const body = request.body
 
       const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM stores WHERE id = ${id} LIMIT 1
+        SELECT id FROM stores WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
       if (existing.length === 0) {
         reply.code(404)
@@ -181,18 +192,20 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
 
       if (updates.length === 0) {
         const rows = await sqlQuery<any>(sql`
-          SELECT id, name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
-          FROM stores WHERE id = ${id} LIMIT 1
+          SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+          FROM stores WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         return { success: true, data: rows[0] }
       }
 
       updates.push('"updatedAt" = NOW()')
-      values.push(id)
+      values.push(ctx.companyId, id)
+      const idParam = values.length
+      const companyParam = values.length - 1
       const q = `
         UPDATE stores SET ${updates.join(', ')}
-        WHERE id = $${values.length}
-        RETURNING id, name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+        WHERE id = $${idParam} AND "companyId" = $${companyParam}
+        RETURNING id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
       `
       const store = await sqlUnsafe<any>(q, values)
       return { success: true, data: store[0] }
@@ -215,17 +228,19 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   // DELETE /api/shopflow/stores/:id
   fastify.delete<{ Params: { id: string } }>('/api/shopflow/stores/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM stores WHERE id = ${id} LIMIT 1
+        SELECT id FROM stores WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
       if (existing.length === 0) {
         reply.code(404)
         return { success: false, error: 'Tienda no encontrada' }
       }
 
-      await sqlQuery(sql`DELETE FROM stores WHERE id = ${id}`)
+      await sqlQuery(sql`DELETE FROM stores WHERE id = ${id} AND "companyId" = ${ctx.companyId}`)
       return { success: true, data: { id } }
     } catch (error) {
       fastify.log.error(error)

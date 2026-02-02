@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/ticket-config - Get ticket configuration
@@ -7,30 +8,32 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
     '/api/shopflow/ticket-config',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { storeId } = request.query
 
         let config = await sqlQuery<any>(sql`
           SELECT 
-            id, "storeId", "ticketType", header, description, "logoUrl", footer,
+            id, "companyId", "storeId", "ticketType", header, description, "logoUrl", footer,
             "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
             "createdAt", "updatedAt"
-          FROM "ticketConfig"
-          WHERE "storeId" IS NOT DISTINCT FROM ${storeId || null}
+          FROM ticket_configs
+          WHERE "companyId" = ${ctx.companyId} AND "storeId" IS NOT DISTINCT FROM ${storeId || null}
           ORDER BY "createdAt" DESC
           LIMIT 1
         `)
 
         if (config.length === 0) {
-          // Create default config
+          // Create default config for this company
           const defaultConfig = await sqlQuery<any>(sql`
-            INSERT INTO "ticketConfig" (
-              "storeId", "ticketType", "thermalWidth", "fontSize", copies, "autoPrint"
+            INSERT INTO ticket_configs (
+              "companyId", "storeId", "ticketType", "thermalWidth", "fontSize", copies, "autoPrint"
             )
             VALUES (
-              ${storeId || null}, 'TICKET', 80, 12, 1, true
+              ${ctx.companyId}, ${storeId || null}, 'TICKET', 80, 12, 1, true
             )
             RETURNING 
-              id, "storeId", "ticketType", header, description, "logoUrl", footer,
+              id, "companyId", "storeId", "ticketType", header, description, "logoUrl", footer,
               "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
               "createdAt", "updatedAt"
           `)
@@ -76,32 +79,34 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/ticket-config', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { storeId } = request.query
       const body = request.body
 
-      // Get current config
+      // Get current config (company-scoped)
       const current = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM "ticketConfig"
-        WHERE "storeId" IS NOT DISTINCT FROM ${storeId || null}
+        SELECT id FROM ticket_configs
+        WHERE "companyId" = ${ctx.companyId} AND "storeId" IS NOT DISTINCT FROM ${storeId || null}
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
 
       if (current.length === 0) {
-        // Create if doesn't exist
+        // Create if doesn't exist for this company
         const newConfig = await sqlQuery<any>(sql`
-          INSERT INTO "ticketConfig" (
-            "storeId", "ticketType", header, description, "logoUrl", footer,
+          INSERT INTO ticket_configs (
+            "companyId", "storeId", "ticketType", header, description, "logoUrl", footer,
             "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint"
           )
           VALUES (
-            ${body.storeId ?? storeId ?? null}, ${body.ticketType ?? 'TICKET'}, 
-            ${body.header}, ${body.description}, ${body.logoUrl}, ${body.footer},
-            ${body.defaultPrinterName}, ${body.thermalWidth ?? 80}, 
+            ${ctx.companyId}, ${body.storeId ?? storeId ?? null}, ${body.ticketType ?? 'TICKET'}, 
+            ${body.header ?? null}, ${body.description ?? null}, ${body.logoUrl ?? null}, ${body.footer ?? null},
+            ${body.defaultPrinterName ?? null}, ${body.thermalWidth ?? 80}, 
             ${body.fontSize ?? 12}, ${body.copies ?? 1}, ${body.autoPrint ?? true}
           )
           RETURNING 
-            id, "storeId", "ticketType", header, description, "logoUrl", footer,
+            id, "companyId", "storeId", "ticketType", header, description, "logoUrl", footer,
             "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
             "createdAt", "updatedAt"
         `)
@@ -170,14 +175,16 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
       }
 
       updates.push(`"updatedAt" = NOW()`)
-      values.push(current[0].id)
+      values.push(ctx.companyId, current[0].id)
 
+      const idParam = values.length
+      const companyParam = values.length - 1
       const query = `
-        UPDATE "ticketConfig" 
+        UPDATE ticket_configs 
         SET ${updates.join(', ')}
-        WHERE id = $${values.length}
+        WHERE id = $${idParam} AND "companyId" = $${companyParam}
         RETURNING 
-          id, "storeId", "ticketType", header, description, "logoUrl", footer,
+          id, "companyId", "storeId", "ticketType", header, description, "logoUrl", footer,
           "defaultPrinterName", "thermalWidth", "fontSize", copies, "autoPrint",
           "createdAt", "updatedAt"
       `

@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export type Sale = {
   id: string
@@ -44,6 +45,8 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/sales', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const {
         customerId,
         userId,
@@ -62,6 +65,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       let query = sql`
         SELECT 
           s.id,
+          s."companyId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -71,13 +75,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
           s.discount,
           s.status,
           s."paymentMethod",
-          s."paidAmount",
-          s.change,
           s.notes,
           s."createdAt",
           s."updatedAt"
         FROM sales s
-        WHERE 1=1
+        WHERE s."companyId" = ${ctx.companyId}
       `
 
       if (customerId) {
@@ -108,7 +110,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       let countQuery = sql`
         SELECT COUNT(*) as total
         FROM sales s
-        WHERE 1=1
+        WHERE s."companyId" = ${ctx.companyId}
       `
       
       if (customerId) {
@@ -229,11 +231,14 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/sales/:id - Get sale by ID
   fastify.get<{ Params: { id: string } }>('/api/shopflow/sales/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       const sale = await sqlQuery<any>(sql`
         SELECT 
           s.id,
+          s."companyId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -243,13 +248,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
           s.discount,
           s.status,
           s."paymentMethod",
-          s."paidAmount",
-          s.change,
           s.notes,
           s."createdAt",
           s."updatedAt"
         FROM sales s
-        WHERE s.id = ${id}
+        WHERE s.id = ${id} AND s."companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -353,15 +356,17 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/sales', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { customerId, userId, items, paymentMethod, paidAmount, discount = 0, taxRate, notes } =
         request.body
 
-      // Validate all products exist and have enough stock
+      // Validate all products exist and have enough stock (same company)
       for (const item of items) {
         const product = await sqlQuery<any>(sql`
           SELECT id, name, stock, active
           FROM products
-          WHERE id = ${item.productId}
+          WHERE id = ${item.productId} AND "companyId" = ${ctx.companyId}
           LIMIT 1
         `)
 
@@ -390,10 +395,10 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Validate customer exists if provided
+      // Validate customer exists if provided (same company)
       if (customerId) {
         const customer = await sqlQuery<any>(sql`
-          SELECT id FROM customers WHERE id = ${customerId} LIMIT 1
+          SELECT id FROM customers WHERE id = ${customerId} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         if (customer.length === 0) {
           reply.code(404)
@@ -404,10 +409,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Get store config for tax rate and invoice number
+      // Get store config for tax rate and invoice number (company-scoped)
       const storeConfig = await sqlQuery<any>(sql`
         SELECT "taxRate", "invoicePrefix", "invoiceNumber"
-        FROM "storeConfig"
+        FROM store_configs
+        WHERE "companyId" = ${ctx.companyId}
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -445,12 +451,13 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       // Calculate change (only for cash payments)
       const change = paymentMethod === 'CASH' ? paidAmount - total : 0
 
-      // Get next invoice number
+      // Get next invoice number (company-scoped)
       const invoiceConfig = await sqlQuery<any>(sql`
-        UPDATE "storeConfig"
+        UPDATE store_configs
         SET "invoiceNumber" = "invoiceNumber" + 1,
             "updatedAt" = NOW()
-        WHERE id = (SELECT id FROM "storeConfig" ORDER BY "createdAt" DESC LIMIT 1)
+        WHERE "companyId" = ${ctx.companyId}
+        AND id = (SELECT id FROM store_configs WHERE "companyId" = ${ctx.companyId} ORDER BY "createdAt" DESC LIMIT 1)
         RETURNING "invoicePrefix", "invoiceNumber"
       `)
 
@@ -462,16 +469,16 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       // Create sale in transaction
       const sale = await sqlQuery<any>(sql`
         INSERT INTO sales (
-          "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
-          status, "paymentMethod", "paidAmount", change, notes
+          "companyId", "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
+          status, "paymentMethod", notes
         )
         VALUES (
-          ${customerId}, ${userId}, ${invoiceNumber}, ${total}, ${subtotal}, ${tax}, ${discount},
-          'COMPLETED', ${paymentMethod}, ${paidAmount}, ${change}, ${notes}
+          ${ctx.companyId}, ${customerId ?? null}, ${userId}, ${invoiceNumber}, ${total}, ${subtotal}, ${tax}, ${discount ?? null},
+          'COMPLETED', ${paymentMethod}, ${notes ?? null}
         )
         RETURNING 
-          id, "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
-          status, "paymentMethod", "paidAmount", change, notes, "createdAt", "updatedAt"
+          id, "companyId", "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
+          status, "paymentMethod", notes, "createdAt", "updatedAt"
       `)
 
       // Create sale items and update product stock
@@ -484,7 +491,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         await sqlQuery(sql`
           UPDATE products
           SET stock = stock - ${item.quantity}
-          WHERE id = ${item.productId}
+          WHERE id = ${item.productId} AND "companyId" = ${ctx.companyId}
         `)
       }
 
@@ -492,6 +499,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       const fullSale = await sqlQuery<any>(sql`
         SELECT 
           s.id,
+          s."companyId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -501,13 +509,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
           s.discount,
           s.status,
           s."paymentMethod",
-          s."paidAmount",
-          s.change,
           s.notes,
           s."createdAt",
           s."updatedAt"
         FROM sales s
-        WHERE s.id = ${sale[0].id}
+        WHERE s.id = ${sale[0].id} AND s."companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -563,12 +569,14 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/sales/:id/cancel - Cancel sale
   fastify.post<{ Params: { id: string } }>('/api/shopflow/sales/:id/cancel', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       const sale = await sqlQuery<any>(sql`
         SELECT id, status
         FROM sales
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -607,7 +615,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       await sqlQuery(sql`
         UPDATE sales
         SET status = 'CANCELLED', "updatedAt" = NOW()
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
       `)
 
       // Restore product stock
@@ -615,7 +623,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         await sqlQuery(sql`
           UPDATE products
           SET stock = stock + ${item.quantity}
-          WHERE id = ${item.productId}
+          WHERE id = ${item.productId} AND "companyId" = ${ctx.companyId}
         `)
       }
 
@@ -623,6 +631,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       const updatedSale = await sqlQuery<any>(sql`
         SELECT 
           s.id,
+          s."companyId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -632,13 +641,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
           s.discount,
           s.status,
           s."paymentMethod",
-          s."paidAmount",
-          s.change,
           s.notes,
           s."createdAt",
           s."updatedAt"
         FROM sales s
-        WHERE s.id = ${id}
+        WHERE s.id = ${id} AND s."companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -661,12 +668,14 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/sales/:id/refund - Refund sale
   fastify.post<{ Params: { id: string } }>('/api/shopflow/sales/:id/refund', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       const sale = await sqlQuery<any>(sql`
         SELECT id, status
         FROM sales
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -713,7 +722,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       await sqlQuery(sql`
         UPDATE sales
         SET status = 'REFUNDED', "updatedAt" = NOW()
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
       `)
 
       // Restore product stock
@@ -721,7 +730,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         await sqlQuery(sql`
           UPDATE products
           SET stock = stock + ${item.quantity}
-          WHERE id = ${item.productId}
+          WHERE id = ${item.productId} AND "companyId" = ${ctx.companyId}
         `)
       }
 
@@ -729,6 +738,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       const updatedSale = await sqlQuery<any>(sql`
         SELECT 
           s.id,
+          s."companyId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -738,13 +748,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
           s.discount,
           s.status,
           s."paymentMethod",
-          s."paidAmount",
-          s.change,
           s.notes,
           s."createdAt",
           s."updatedAt"
         FROM sales s
-        WHERE s.id = ${id}
+        WHERE s.id = ${id} AND s."companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 

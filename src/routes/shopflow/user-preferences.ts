@@ -1,29 +1,32 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
-  // GET /api/shopflow/user-preferences - Get user preferences
+  // GET /api/shopflow/user-preferences - Get user preferences (scoped by company)
   fastify.get<{ Params: { userId: string } }>(
     '/api/shopflow/user-preferences/:userId',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { userId } = request.params
 
         let preferences = await sqlQuery<any>(sql`
           SELECT 
-            id, "userId", language, theme, "createdAt", "updatedAt"
-          FROM "userPreferences"
-          WHERE "userId" = ${userId}
+            id, "userId", "companyId", language, "createdAt", "updatedAt"
+          FROM user_preferences
+          WHERE "userId" = ${userId} AND "companyId" IS NOT DISTINCT FROM ${ctx.companyId}
           LIMIT 1
         `)
 
         if (preferences.length === 0) {
-          // Create default preferences
+          // Create default preferences for this user+company
           const defaultPrefs = await sqlQuery<any>(sql`
-            INSERT INTO "userPreferences" ("userId", language)
-            VALUES (${userId}, 'es')
+            INSERT INTO user_preferences ("userId", "companyId", language)
+            VALUES (${userId}, ${ctx.companyId}, 'es')
             RETURNING 
-              id, "userId", language, theme, "createdAt", "updatedAt"
+              id, "userId", "companyId", language, "createdAt", "updatedAt"
           `)
 
           return {
@@ -58,21 +61,23 @@ export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/user-preferences/:userId', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { userId } = request.params
-      const { language, theme } = request.body
+      const { language } = request.body
 
-      // Get or create preferences
+      // Get or create preferences (company-scoped)
       let preferences = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM "userPreferences" WHERE "userId" = ${userId} LIMIT 1
+        SELECT id FROM user_preferences WHERE "userId" = ${userId} AND "companyId" IS NOT DISTINCT FROM ${ctx.companyId} LIMIT 1
       `)
 
       if (preferences.length === 0) {
-        // Create if doesn't exist
+        // Create if doesn't exist for this user+company
         const newPrefs = await sqlQuery<any>(sql`
-          INSERT INTO "userPreferences" ("userId", language, theme)
-          VALUES (${userId}, ${language ?? 'es'}, ${theme})
+          INSERT INTO user_preferences ("userId", "companyId", language)
+          VALUES (${userId}, ${ctx.companyId}, ${language ?? 'es'})
           RETURNING 
-            id, "userId", language, theme, "createdAt", "updatedAt"
+            id, "userId", "companyId", language, "createdAt", "updatedAt"
         `)
 
         return {
@@ -89,10 +94,6 @@ export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
         updates.push(`language = $${values.length + 1}`)
         values.push(language)
       }
-      if (theme !== undefined) {
-        updates.push(`theme = $${values.length + 1}`)
-        values.push(theme)
-      }
 
       if (updates.length === 0) {
         reply.code(400)
@@ -103,14 +104,16 @@ export async function shopflowUserPreferencesRoutes(fastify: FastifyInstance) {
       }
 
       updates.push(`"updatedAt" = NOW()`)
-      values.push(preferences[0].id)
+      values.push(ctx.companyId, preferences[0].id)
 
+      const idParam = values.length
+      const companyParam = values.length - 1
       const query = `
-        UPDATE "userPreferences" 
+        UPDATE user_preferences 
         SET ${updates.join(', ')}
-        WHERE id = $${values.length}
+        WHERE id = $${idParam} AND "companyId" IS NOT DISTINCT FROM $${companyParam}
         RETURNING 
-          id, "userId", language, theme, "createdAt", "updatedAt"
+          id, "userId", "companyId", language, "createdAt", "updatedAt"
       `
 
       const updated = await sqlUnsafe<any>(query, values)

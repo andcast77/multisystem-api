@@ -6,26 +6,26 @@ import jwt from 'jsonwebtoken'
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
 
-// Helper function to generate JWT token
-function generateToken(user: Pick<User, 'id' | 'email' | 'role'>): string {
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    },
-    JWT_SECRET,
-    {
-      expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
-    }
-  )
+export type TokenPayload = {
+  id: string
+  email: string
+  role: string
+  companyId?: string
+  isSuperuser?: boolean
+  membershipRole?: string
 }
 
-// Helper function to verify JWT token
-function verifyToken(token: string): { id: string; email: string; role: string } | null {
+// Helper function to generate JWT token (optionally with company context)
+function generateToken(payload: TokenPayload): string {
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+  })
+}
+
+// Helper function to verify JWT token (exported for use in other routes)
+export function verifyToken(token: string): TokenPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string; role: string }
-    return decoded
+    return jwt.verify(token, JWT_SECRET) as TokenPayload
   } catch (error) {
     return null
   }
@@ -37,10 +37,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     Body: {
       email: string
       password: string
+      companyId?: string
     }
   }>('/api/auth/login', async (request, reply) => {
     try {
-      const { email, password } = request.body
+      const { email, password, companyId: bodyCompanyId } = request.body
 
       if (!email || !password) {
         reply.code(400)
@@ -50,7 +51,6 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Find user by email (schema: firstName, lastName, isActive)
       const users = (await sql`
         SELECT 
           id,
@@ -58,6 +58,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           password,
           role,
           "isActive",
+          "isSuperuser",
           "firstName",
           "lastName"
         FROM users
@@ -75,7 +76,6 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       const user = users[0]
 
-      // Check if user is active
       if (!user.isActive) {
         reply.code(401)
         return {
@@ -84,7 +84,6 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Verify password
       const isValidPassword = await bcrypt.compare(password, user.password)
       if (!isValidPassword) {
         reply.code(401)
@@ -94,7 +93,240 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Generate token
+      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; membershipRole?: string }
+      let companies: CompanyRow[] = []
+      let selectedCompany: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean } | null = null
+      let selectedMembershipRole: string | null = null
+
+      // Superuser: get all companies; token may include companyId if bodyCompanyId provided
+      if (user.isSuperuser) {
+        const allCompanies = (await sql`
+          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          FROM companies
+          WHERE "isActive" = true
+          ORDER BY name
+        `) as CompanyRow[]
+        companies = allCompanies
+        if (bodyCompanyId && allCompanies.some((c) => c.id === bodyCompanyId)) {
+          selectedCompany = allCompanies.find((c) => c.id === bodyCompanyId) ?? null
+        }
+      } else {
+        // Company members (company_members); fallback to user_roles
+        try {
+          const members = (await sql`
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", cm."membershipRole" as "membershipRole"
+            FROM company_members cm
+            JOIN companies c ON c.id = cm."companyId"
+            WHERE cm."userId" = ${user.id} AND c."isActive" = true
+            ORDER BY c.name
+          `) as CompanyRow[]
+          if (members.length > 0) {
+            companies = members
+          }
+        } catch {
+          // company_members may not exist yet
+        }
+        if (companies.length === 0) {
+          const ur = (await sql`
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled"
+            FROM user_roles ur
+            JOIN companies c ON c.id = ur."companyId"
+            WHERE ur."userId" = ${user.id}
+            ORDER BY c.name
+          `) as CompanyRow[]
+          companies = ur.map((r) => ({ ...r, membershipRole: undefined }))
+        }
+        if (bodyCompanyId && companies.some((c) => c.id === bodyCompanyId)) {
+          const row = companies.find((c) => c.id === bodyCompanyId)
+          if (row) {
+            selectedCompany = row
+            selectedMembershipRole = row.membershipRole ?? null
+          }
+        } else if (companies.length === 1) {
+          selectedCompany = { id: companies[0].id, name: companies[0].name, workifyEnabled: companies[0].workifyEnabled, shopflowEnabled: companies[0].shopflowEnabled }
+          selectedMembershipRole = companies[0].membershipRole ?? null
+        }
+      }
+
+      const tokenPayload: TokenPayload = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        isSuperuser: user.isSuperuser ?? false,
+      }
+      if (selectedCompany) {
+        tokenPayload.companyId = selectedCompany.id
+        if (selectedMembershipRole) tokenPayload.membershipRole = selectedMembershipRole
+      }
+      const token = generateToken(tokenPayload)
+
+      const data: {
+        user: { id: string; email: string; name: string; role: string; isSuperuser?: boolean }
+        token: string
+        companyId?: string
+        company?: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }
+        companies?: CompanyRow[]
+      } = {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: userDisplayName(user),
+          role: user.role,
+          isSuperuser: user.isSuperuser ?? false,
+        },
+        token,
+      }
+      if (selectedCompany) {
+        data.companyId = selectedCompany.id
+        data.company = selectedCompany
+      }
+      if (companies.length > 1 || user.isSuperuser) {
+        data.companies = companies
+      }
+
+      return { success: true, data }
+    } catch (error) {
+      fastify.log.error(error)
+      reply.code(500)
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+      return {
+        success: false,
+        error: 'Error al autenticar usuario',
+        message: errorMessage,
+      }
+    }
+  })
+
+  // POST /api/auth/logout - Logout (client clears cookie)
+  fastify.post('/api/auth/logout', async (_request, reply) => {
+    reply.code(200)
+    return { success: true }
+  })
+
+  // POST /api/auth/register - Register new company (Hub only). With companyName: creates company, user as owner, CompanyMember OWNER, role admin + user_role.
+  fastify.post<{
+    Body: {
+      email: string
+      password: string
+      firstName?: string
+      lastName?: string
+      companyName?: string
+      workifyEnabled?: boolean
+      shopflowEnabled?: boolean
+    }
+  }>('/api/auth/register', async (request, reply) => {
+    try {
+      const { email, password, firstName = '', lastName = '', companyName, workifyEnabled = true, shopflowEnabled = false } = request.body
+
+      if (!email || !password) {
+        reply.code(400)
+        return {
+          success: false,
+          error: 'Email y contraseña son requeridos',
+        }
+      }
+
+      const existing = await sqlQuery<{ id: string }>(sql`
+        SELECT id FROM users WHERE email = ${email} LIMIT 1
+      `)
+      if (existing.length > 0) {
+        reply.code(400)
+        return {
+          success: false,
+          error: 'Ya existe un usuario con este email',
+        }
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10)
+
+      if (companyName && companyName.trim()) {
+        // Hub: create user (owner), company with ownerUserId + modules, CompanyMember OWNER, role admin + user_role
+        try {
+          const users = (await sqlQuery<User & { password?: string }>(sql`
+            INSERT INTO users (id, email, password, "firstName", "lastName", role, "isActive", "isSuperuser", "createdAt", "updatedAt")
+            VALUES (gen_random_uuid(), ${email}, ${hashedPassword}, ${firstName}, ${lastName}, 'USER', true, false, NOW(), NOW())
+            RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
+          `)) as User[]
+          if (users.length === 0) throw new Error('User insert failed')
+          const user = users[0]
+
+          const companyRows = (await sql`
+            INSERT INTO companies (id, name, "ownerUserId", "workifyEnabled", "shopflowEnabled", "isActive", "createdAt", "updatedAt")
+            VALUES (gen_random_uuid(), ${companyName.trim()}, ${user.id}, ${workifyEnabled}, ${shopflowEnabled}, true, NOW(), NOW())
+            RETURNING id
+          `) as Array<{ id: string }>
+          if (companyRows.length === 0) throw new Error('Company insert failed')
+          const companyId = companyRows[0].id
+
+          await sql`
+            INSERT INTO company_members (id, "userId", "companyId", "membershipRole", "createdAt", "updatedAt")
+            VALUES (gen_random_uuid(), ${user.id}, ${companyId}, 'OWNER', NOW(), NOW())
+          `
+
+          let roleRows = (await sql`
+            SELECT id FROM roles WHERE name = 'admin' AND "companyId" = ${companyId} LIMIT 1
+          `) as Array<{ id: string }>
+          if (roleRows.length === 0) {
+            roleRows = (await sql`
+              INSERT INTO roles (id, name, "companyId", "createdAt", "updatedAt")
+              VALUES (gen_random_uuid(), 'admin', ${companyId}, NOW(), NOW())
+              RETURNING id
+            `) as Array<{ id: string }>
+          }
+          const roleId = roleRows[0].id
+
+          await sql`
+            INSERT INTO user_roles (id, "userId", "roleId", "companyId", "createdAt", "updatedAt")
+            VALUES (gen_random_uuid(), ${user.id}, ${roleId}, ${companyId}, NOW(), NOW())
+          `
+
+          const token = generateToken({
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            companyId,
+            isSuperuser: false,
+            membershipRole: 'OWNER',
+          })
+
+          return {
+            success: true,
+            data: {
+              user: {
+                id: user.id,
+                email: user.email,
+                name: userDisplayName(user),
+                role: user.role,
+                companyId,
+              },
+              token,
+              company: { id: companyId, name: companyName.trim(), workifyEnabled, shopflowEnabled },
+            },
+          }
+        } catch (err) {
+          fastify.log.error(err)
+          reply.code(500)
+          return {
+            success: false,
+            error: 'Error al registrar (tablas companies/company_members/roles/user_roles pueden no existir). Ejecuta migraciones.',
+            message: err instanceof Error ? err.message : 'Error',
+          }
+        }
+      }
+
+      // No company: only user (legacy; normally users are created from Hub or from Usuarios tab)
+      const users = (await sqlQuery<User>(sql`
+        INSERT INTO users (id, email, password, "firstName", "lastName", role, "isActive", "isSuperuser", "createdAt", "updatedAt")
+        VALUES (gen_random_uuid(), ${email}, ${hashedPassword}, ${firstName}, ${lastName}, 'USER', true, false, NOW(), NOW())
+        RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
+      `)) as User[]
+
+      if (users.length === 0) {
+        reply.code(500)
+        return { success: false, error: 'Error al crear usuario' }
+      }
+
+      const user = users[0]
       const token = generateToken({
         id: user.id,
         email: user.email,
@@ -119,7 +351,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
       return {
         success: false,
-        error: 'Error al autenticar usuario',
+        error: 'Error al registrar usuario',
         message: errorMessage,
       }
     }
@@ -186,9 +418,25 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
+      let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean } | null = null
+      if (decoded.companyId) {
+        const rows = (await sql`
+          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          FROM companies WHERE id = ${decoded.companyId} AND "isActive" = true LIMIT 1
+        `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+        company = rows[0] ?? null
+      }
+
       return {
         success: true,
-        data: { ...user, name: userDisplayName(user) },
+        data: {
+          ...user,
+          name: userDisplayName(user),
+          companyId: decoded.companyId,
+          membershipRole: decoded.membershipRole,
+          isSuperuser: decoded.isSuperuser,
+          company: company ?? undefined,
+        },
       }
     } catch (error) {
       fastify.log.error(error)
@@ -261,6 +509,144 @@ export async function authRoutes(fastify: FastifyInstance) {
         error: 'Error al verificar token',
         message: errorMessage,
       }
+    }
+  })
+
+  // GET /api/auth/companies - List companies for authenticated user (or all if superuser)
+  fastify.get<{
+    Headers: { authorization?: string }
+  }>('/api/auth/companies', async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        reply.code(401)
+        return { success: false, error: 'Token de autenticación requerido' }
+      }
+      const decoded = verifyToken(authHeader.substring(7))
+      if (!decoded) {
+        reply.code(401)
+        return { success: false, error: 'Token inválido o expirado' }
+      }
+
+      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; membershipRole?: string }
+      let companies: CompanyRow[] = []
+
+      if (decoded.isSuperuser) {
+        companies = (await sql`
+          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          FROM companies
+          WHERE "isActive" = true
+          ORDER BY name
+        `) as CompanyRow[]
+      } else {
+        try {
+          companies = (await sql`
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", cm."membershipRole" as "membershipRole"
+            FROM company_members cm
+            JOIN companies c ON c.id = cm."companyId"
+            WHERE cm."userId" = ${decoded.id} AND c."isActive" = true
+            ORDER BY c.name
+          `) as CompanyRow[]
+        } catch {
+          const ur = (await sql`
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled"
+            FROM user_roles ur
+            JOIN companies c ON c.id = ur."companyId"
+            WHERE ur."userId" = ${decoded.id} AND c."isActive" = true
+            ORDER BY c.name
+          `) as CompanyRow[]
+          companies = ur
+        }
+      }
+
+      return { success: true, data: companies }
+    } catch (error) {
+      fastify.log.error(error)
+      reply.code(500)
+      return { success: false, error: error instanceof Error ? error.message : 'Error' }
+    }
+  })
+
+  // POST /api/auth/context - Set company context (return new token with companyId)
+  fastify.post<{
+    Headers: { authorization?: string }
+    Body: { companyId: string }
+  }>('/api/auth/context', async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        reply.code(401)
+        return { success: false, error: 'Token de autenticación requerido' }
+      }
+      const decoded = verifyToken(authHeader.substring(7))
+      if (!decoded) {
+        reply.code(401)
+        return { success: false, error: 'Token inválido o expirado' }
+      }
+
+      const { companyId } = request.body
+      if (!companyId) {
+        reply.code(400)
+        return { success: false, error: 'companyId es requerido' }
+      }
+
+      let allowed = false
+      let membershipRole: string | null = null
+
+      if (decoded.isSuperuser) {
+        const rows = (await sql`
+          SELECT id FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
+        `) as Array<{ id: string }>
+        allowed = rows.length > 0
+      } else {
+        try {
+          const rows = (await sql`
+            SELECT "membershipRole" FROM company_members
+            WHERE "userId" = ${decoded.id} AND "companyId" = ${companyId} LIMIT 1
+          `) as Array<{ membershipRole: string }>
+          if (rows.length > 0) {
+            allowed = true
+            membershipRole = rows[0].membershipRole
+          }
+        } catch {
+          const ur = (await sql`
+            SELECT 1 FROM user_roles WHERE "userId" = ${decoded.id} AND "companyId" = ${companyId} LIMIT 1
+          `) as Array<{ '?column?': number }>
+          allowed = ur.length > 0
+        }
+      }
+
+      if (!allowed) {
+        reply.code(403)
+        return { success: false, error: 'No tienes acceso a esta empresa' }
+      }
+
+      const token = generateToken({
+        id: decoded.id,
+        email: decoded.email,
+        role: decoded.role,
+        companyId,
+        isSuperuser: decoded.isSuperuser,
+        membershipRole: membershipRole ?? undefined,
+      })
+
+      const companyRows = (await sql`
+        SELECT id, name, "workifyEnabled", "shopflowEnabled"
+        FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
+      `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+
+      return {
+        success: true,
+        data: {
+          token,
+          companyId,
+          company: companyRows[0] ?? null,
+        },
+      }
+    } catch (error) {
+      fastify.log.error(error)
+      reply.code(500)
+      return { success: false, error: error instanceof Error ? error.message : 'Error' }
     }
   })
 

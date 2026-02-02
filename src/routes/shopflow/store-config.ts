@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export type StoreConfig = {
   id: string
@@ -22,28 +23,31 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/store-config - Get store configuration
   fastify.get('/api/shopflow/store-config', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const config = await sqlQuery<any>(sql`
         SELECT 
-          id, name, address, phone, email, "taxId", currency, "taxRate", 
+          id, "companyId", name, address, phone, email, "taxId", currency, "taxRate", 
           "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
           "createdAt", "updatedAt"
-        FROM "storeConfig"
+        FROM store_configs
+        WHERE "companyId" = ${ctx.companyId}
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
 
       if (config.length === 0) {
-        // Create default config if none exists
+        // Create default config if none exists for this company
         const defaultConfig = await sqlQuery<any>(sql`
-          INSERT INTO "storeConfig" (
-            name, currency, "taxRate", "lowStockAlert", "invoicePrefix", 
+          INSERT INTO store_configs (
+            "companyId", name, currency, "taxRate", "lowStockAlert", "invoicePrefix", 
             "invoiceNumber", "allowSalesWithoutStock"
           )
           VALUES (
-            'My Store', 'USD', 0, 10, 'INV-', 1, false
+            ${ctx.companyId}, 'My Store', 'USD', 0, 10, 'INV-', 1, false
           )
           RETURNING 
-            id, name, address, phone, email, "taxId", currency, "taxRate", 
+            id, "companyId", name, address, phone, email, "taxId", currency, "taxRate", 
             "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
             "createdAt", "updatedAt"
         `)
@@ -73,6 +77,8 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   // PUT /api/shopflow/store-config - Update store configuration
   fastify.put<{ Body: Partial<StoreConfig> }>('/api/shopflow/store-config', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const {
         name,
         address,
@@ -86,27 +92,28 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
         allowSalesWithoutStock,
       } = request.body
 
-      // Get current config
+      // Get current config (company-scoped)
       const current = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM "storeConfig"
+        SELECT id FROM store_configs
+        WHERE "companyId" = ${ctx.companyId}
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
 
       if (current.length === 0) {
-        // Create if doesn't exist
+        // Create if doesn't exist for this company
         const newConfig = await sqlQuery<any>(sql`
-          INSERT INTO "storeConfig" (
-            name, address, phone, email, "taxId", currency, "taxRate", 
+          INSERT INTO store_configs (
+            "companyId", name, address, phone, email, "taxId", currency, "taxRate", 
             "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock"
           )
           VALUES (
-            ${name ?? 'My Store'}, ${address}, ${phone}, ${email}, ${taxId}, 
+            ${ctx.companyId}, ${name ?? 'My Store'}, ${address ?? null}, ${phone ?? null}, ${email ?? null}, ${taxId ?? null}, 
             ${currency ?? 'USD'}, ${taxRate ?? 0}, ${lowStockAlert ?? 10}, 
             ${invoicePrefix ?? 'INV-'}, 1, ${allowSalesWithoutStock ?? false}
           )
           RETURNING 
-            id, name, address, phone, email, "taxId", currency, "taxRate", 
+            id, "companyId", name, address, phone, email, "taxId", currency, "taxRate", 
             "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
             "createdAt", "updatedAt"
         `)
@@ -171,14 +178,16 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
       }
 
       updates.push(`"updatedAt" = NOW()`)
-      values.push(current[0].id)
+      values.push(ctx.companyId, current[0].id)
 
+      const idParam = values.length
+      const companyParam = values.length - 1
       const query = `
-        UPDATE "storeConfig" 
+        UPDATE store_configs 
         SET ${updates.join(', ')}
-        WHERE id = $${values.length}
+        WHERE id = $${idParam} AND "companyId" = $${companyParam}
         RETURNING 
-          id, name, address, phone, email, "taxId", currency, "taxRate", 
+          id, "companyId", name, address, phone, email, "taxId", currency, "taxRate", 
           "lowStockAlert", "invoicePrefix", "invoiceNumber", "allowSalesWithoutStock",
           "createdAt", "updatedAt"
       `
@@ -204,9 +213,12 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/store-config/next-invoice-number - Get next invoice number
   fastify.post('/api/shopflow/store-config/next-invoice-number', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const config = await sqlQuery<any>(sql`
         SELECT "invoicePrefix", "invoiceNumber"
-        FROM "storeConfig"
+        FROM store_configs
+        WHERE "companyId" = ${ctx.companyId}
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -219,14 +231,13 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Increment invoice number
+      // Increment invoice number (company-scoped)
       const updated = await sqlQuery<any>(sql`
-        UPDATE "storeConfig"
+        UPDATE store_configs
         SET "invoiceNumber" = "invoiceNumber" + 1,
             "updatedAt" = NOW()
-        WHERE id = (
-          SELECT id FROM "storeConfig" ORDER BY "createdAt" DESC LIMIT 1
-        )
+        WHERE "companyId" = ${ctx.companyId}
+        AND id = (SELECT id FROM store_configs WHERE "companyId" = ${ctx.companyId} ORDER BY "createdAt" DESC LIMIT 1)
         RETURNING "invoicePrefix", "invoiceNumber"
       `)
 

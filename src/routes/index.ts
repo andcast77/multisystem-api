@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { healthRoutes } from './health.js'
 import { usersRoutes } from './users.js'
 import { authRoutes } from './auth.js'
+import { companyMembersRoutes } from './company-members.js'
 import { shopflowCustomersRoutes } from './shopflow/customers.js'
 import { shopflowCategoriesRoutes } from './shopflow/categories.js'
 import { shopflowSuppliersRoutes } from './shopflow/suppliers.js'
@@ -18,6 +19,7 @@ import { shopflowStoresRoutes } from './shopflow/stores.js'
 import { shopflowExportRoutes } from './shopflow/export.js'
 import { shopflowInventoryTransfersRoutes } from './shopflow/inventory-transfers.js'
 import { shopflowPushSubscriptionsRoutes } from './shopflow/push-subscriptions.js'
+import { workifyRoutes } from './workify/index.js'
 
 export async function registerRoutes(fastify: FastifyInstance) {
   // Ruta raíz - información de la API
@@ -28,6 +30,14 @@ export async function registerRoutes(fastify: FastifyInstance) {
       status: 'running',
       endpoints: {
         health: '/health',
+        auth: {
+          login: 'POST /api/auth/login',
+          logout: 'POST /api/auth/logout',
+          register: 'POST /api/auth/register',
+          me: 'GET /api/auth/me',
+          verify: 'POST /api/auth/verify',
+          sessions: 'POST/GET/DELETE /api/auth/sessions*',
+        },
         users: {
           list: 'GET /api/users',
           getById: 'GET /api/users/:id',
@@ -67,6 +77,9 @@ export async function registerRoutes(fastify: FastifyInstance) {
             refund: 'POST /api/shopflow/sales/:id/refund',
           },
         },
+        workify: {
+          me: 'GET /api/workify/me',
+        },
       },
     }
   })
@@ -74,6 +87,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
   await fastify.register(healthRoutes)
   await fastify.register(usersRoutes)
   await fastify.register(authRoutes)
+  await fastify.register(companyMembersRoutes)
   await fastify.register(shopflowCustomersRoutes)
   await fastify.register(shopflowCategoriesRoutes)
   await fastify.register(shopflowSuppliersRoutes)
@@ -90,4 +104,5 @@ export async function registerRoutes(fastify: FastifyInstance) {
   await fastify.register(shopflowExportRoutes)
   await fastify.register(shopflowInventoryTransfersRoutes)
   await fastify.register(shopflowPushSubscriptionsRoutes)
+  await fastify.register(workifyRoutes)
 }

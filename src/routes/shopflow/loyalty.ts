@@ -1,16 +1,19 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/loyalty/config - Get loyalty configuration
   fastify.get('/api/shopflow/loyalty/config', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const config = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase", active
-        FROM "loyaltyConfig"
-        WHERE active = true
+        FROM loyalty_configs
+        WHERE "companyId" = ${ctx.companyId} AND active = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -64,16 +67,18 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/loyalty/config', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { pointsPerDollar, redemptionRate, pointsExpireMonths, minPurchaseForPoints, maxPointsPerPurchase } =
         request.body
 
-      // Get current config
+      // Get current config (company-scoped)
       const current = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase"
-        FROM "loyaltyConfig"
-        WHERE active = true
+        FROM loyalty_configs
+        WHERE "companyId" = ${ctx.companyId} AND active = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -86,13 +91,14 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         maxPointsPerPurchase: null,
       }
 
-      // Create new config (versioning)
+      // Create new config (versioning, company-scoped)
       const newConfig = await sqlQuery(sql`
-        INSERT INTO "loyaltyConfig" (
-          "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
+        INSERT INTO loyalty_configs (
+          "companyId", "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase", active
         )
         VALUES (
+          ${ctx.companyId},
           ${pointsPerDollar ?? currentConfig.pointsPerDollar},
           ${redemptionRate ?? currentConfig.redemptionRate},
           ${pointsExpireMonths ?? currentConfig.pointsExpireMonths},
@@ -101,17 +107,17 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           true
         )
         RETURNING 
-          id, "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
+          id, "companyId", "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase"
       `)
 
-      // Deactivate old configs
+      // Deactivate old configs for this company
       if (newConfig.length > 0) {
-        await sql`
-          UPDATE "loyaltyConfig"
+        await sqlQuery(sql`
+          UPDATE loyalty_configs
           SET active = false
-          WHERE id != ${newConfig[0].id} AND active = true
-        `
+          WHERE "companyId" = ${ctx.companyId} AND id != ${newConfig[0].id} AND active = true
+        `)
       }
 
       return {
@@ -143,11 +149,13 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
     '/api/shopflow/loyalty/points/:customerId',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { customerId } = request.params
 
-        // Check customer exists
+        // Check customer exists (same company)
         const customer = await sqlQuery(sql`
-          SELECT id, name FROM customers WHERE id = ${customerId} LIMIT 1
+          SELECT id, name FROM customers WHERE id = ${customerId} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
 
         if (customer.length === 0) {
@@ -158,12 +166,12 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           }
         }
 
-        // Get all points transactions
+        // Get all points transactions (company-scoped)
         const transactions = await sqlQuery(sql`
           SELECT 
             id, points, type, description, "saleId", "expiresAt", "createdAt"
-          FROM "loyaltyPoints"
-          WHERE "customerId" = ${customerId}
+          FROM loyalty_points
+          WHERE "companyId" = ${ctx.companyId} AND "customerId" = ${customerId}
           ORDER BY "createdAt" DESC
         `)
 
@@ -239,14 +247,16 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/loyalty/points/award', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { customerId, purchaseAmount, saleId } = request.body
 
-      // Get loyalty config
+      // Get loyalty config (company-scoped)
       const config = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "minPurchaseForPoints", "maxPointsPerPurchase", "pointsExpireMonths"
-        FROM "loyaltyConfig"
-        WHERE active = true
+        FROM loyalty_configs
+        WHERE "companyId" = ${ctx.companyId} AND active = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -294,14 +304,14 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         expiresAt.setMonth(expiresAt.getMonth() + parseInt(cfg.pointsExpireMonths))
       }
 
-      // Create points transaction
+      // Create points transaction (company-scoped)
       const transaction = await sqlQuery(sql`
-        INSERT INTO "loyaltyPoints" (
-          "customerId", type, points, description, "saleId", "expiresAt", balance
+        INSERT INTO loyalty_points (
+          "companyId", "customerId", type, points, description, "saleId", "expiresAt"
         )
         VALUES (
-          ${customerId}, 'EARNED', ${pointsToAward}, 
-          ${`Points earned from purchase #${saleId}`}, ${saleId}, ${expiresAt}, 0
+          ${ctx.companyId}, ${customerId}, 'EARNED', ${pointsToAward}, 
+          ${`Points earned from purchase #${saleId}`}, ${saleId}, ${expiresAt}
         )
         RETURNING id, points
       `)

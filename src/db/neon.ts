@@ -44,7 +44,7 @@ export async function sqlUnsafe<T = any>(query: string, values?: any[]): Promise
   return result ? [result] as T[] : []
 }
 
-// Helper para tipado de resultados (columnas según Prisma schema: firstName, lastName, isActive)
+// Helper para tipado de resultados (columnas según Prisma schema: firstName, lastName, isActive, isSuperuser)
 export type User = {
   id: string
   email: string
@@ -52,6 +52,7 @@ export type User = {
   lastName: string
   role: 'USER' | 'ADMIN' | 'SUPERADMIN'
   isActive: boolean
+  isSuperuser?: boolean
   createdAt: Date
   updatedAt: Date
 }

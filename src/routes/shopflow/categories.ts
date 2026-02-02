@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export type Category = {
   id: string
@@ -16,11 +17,14 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
     '/api/shopflow/categories',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { search, parentId, includeChildren } = request.query
 
         let query = sql`
           SELECT 
             c.id,
+            c."companyId",
             c.name,
             c.description,
             c."parentId",
@@ -31,10 +35,10 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
             parent.id as parent_id,
             parent.name as parent_name
           FROM categories c
-          LEFT JOIN products p ON p."categoryId" = c.id
-          LEFT JOIN categories ch ON ch."parentId" = c.id
+          LEFT JOIN products p ON p."categoryId" = c.id AND p."companyId" = c."companyId"
+          LEFT JOIN categories ch ON ch."parentId" = c.id AND ch."companyId" = c."companyId"
           LEFT JOIN categories parent ON parent.id = c."parentId"
-          WHERE 1=1
+          WHERE c."companyId" = ${ctx.companyId}
         `
 
         if (search) {
@@ -110,18 +114,21 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/categories/:id - Get category by ID
   fastify.get<{ Params: { id: string } }>('/api/shopflow/categories/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       const category = await sqlQuery<any>(sql`
         SELECT 
           c.id,
+          c."companyId",
           c.name,
           c.description,
           c."parentId",
           c."createdAt",
           c."updatedAt"
         FROM categories c
-        WHERE c.id = ${id}
+        WHERE c.id = ${id} AND c."companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -136,18 +143,18 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
       // Get parent if exists
       const parent = category[0].parentId
         ? await sqlQuery<any>(sql`
-            SELECT id, name, description
+            SELECT id, "companyId", name, description
             FROM categories
-            WHERE id = ${category[0].parentId}
+            WHERE id = ${category[0].parentId} AND "companyId" = ${ctx.companyId}
             LIMIT 1
           `)
         : []
 
       // Get children
       const children = await sqlQuery<any>(sql`
-        SELECT id, name, description, "parentId"
+        SELECT id, "companyId", name, description, "parentId"
         FROM categories
-        WHERE "parentId" = ${id}
+        WHERE "parentId" = ${id} AND "companyId" = ${ctx.companyId}
         ORDER BY name ASC
       `)
 
@@ -155,14 +162,14 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
       const productsCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM products
-        WHERE "categoryId" = ${id}
+        WHERE "categoryId" = ${id} AND "companyId" = ${ctx.companyId}
       `)
 
       // Get children count
       const childrenCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM categories
-        WHERE "parentId" = ${id}
+        WHERE "parentId" = ${id} AND "companyId" = ${ctx.companyId}
       `)
 
       return {
@@ -192,12 +199,14 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/categories - Create category
   fastify.post<{ Body: Category }>('/api/shopflow/categories', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { name, description, parentId } = request.body
 
       // Check if category name already exists at the same level
       const existing = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM categories
-        WHERE name = ${name} AND "parentId" IS NOT DISTINCT FROM ${parentId}
+        WHERE "companyId" = ${ctx.companyId} AND name = ${name} AND "parentId" IS NOT DISTINCT FROM ${parentId}
         LIMIT 1
       `)
 
@@ -212,7 +221,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
       // Validate parent exists if provided
       if (parentId) {
         const parent = await sqlQuery<{ id: string }>(sql`
-          SELECT id FROM categories WHERE id = ${parentId} LIMIT 1
+          SELECT id FROM categories WHERE id = ${parentId} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         if (parent.length === 0) {
           reply.code(404)
@@ -224,17 +233,17 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
       }
 
       const category = await sqlQuery<any>(sql`
-        INSERT INTO categories (name, description, "parentId")
-        VALUES (${name}, ${description}, ${parentId})
-        RETURNING id, name, description, "parentId", "createdAt", "updatedAt"
+        INSERT INTO categories ("companyId", name, description, "parentId")
+        VALUES (${ctx.companyId}, ${name}, ${description}, ${parentId})
+        RETURNING id, "companyId", name, description, "parentId", "createdAt", "updatedAt"
       `)
 
       // Get counts
       const productsCount = await sqlQuery<{ count: string }>(sql`
-        SELECT COUNT(*) as count FROM products WHERE "categoryId" = ${category[0].id}
+        SELECT COUNT(*) as count FROM products WHERE "categoryId" = ${category[0].id} AND "companyId" = ${ctx.companyId}
       `)
       const childrenCount = await sqlQuery<{ count: string }>(sql`
-        SELECT COUNT(*) as count FROM categories WHERE "parentId" = ${category[0].id}
+        SELECT COUNT(*) as count FROM categories WHERE "parentId" = ${category[0].id} AND "companyId" = ${ctx.companyId}
       `)
 
       // Get parent if exists
@@ -272,12 +281,14 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
     '/api/shopflow/categories/:id',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { id } = request.params
         const { name, description, parentId } = request.body
 
         // Check if category exists
         const existing = await sqlQuery<any>(sql`
-          SELECT id, name, "parentId" FROM categories WHERE id = ${id} LIMIT 1
+          SELECT id, name, "parentId" FROM categories WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
 
         if (existing.length === 0) {
@@ -301,7 +312,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
         if (name && name !== existing[0].name) {
           const sibling = await sqlQuery<{ id: string }>(sql`
             SELECT id FROM categories
-            WHERE name = ${name} 
+            WHERE "companyId" = ${ctx.companyId} AND name = ${name} 
               AND "parentId" IS NOT DISTINCT FROM ${parentId ?? existing[0].parentId}
               AND id != ${id}
             LIMIT 1
@@ -318,7 +329,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
         // Validate parent exists if provided
         if (parentId) {
           const parent = await sqlQuery<{ id: string }>(sql`
-            SELECT id FROM categories WHERE id = ${parentId} LIMIT 1
+            SELECT id FROM categories WHERE id = ${parentId} AND "companyId" = ${ctx.companyId} LIMIT 1
           `)
           if (parent.length === 0) {
             reply.code(404)
@@ -355,23 +366,25 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
         }
 
         updates.push(`"updatedAt" = NOW()`)
-        values.push(id)
+        values.push(ctx.companyId, id)
 
+        const idParam = values.length
+        const companyParam = values.length - 1
         const query = `
           UPDATE categories 
           SET ${updates.join(', ')}
-          WHERE id = $${values.length}
-          RETURNING id, name, description, "parentId", "createdAt", "updatedAt"
+          WHERE id = $${idParam} AND "companyId" = $${companyParam}
+          RETURNING id, "companyId", name, description, "parentId", "createdAt", "updatedAt"
         `
 
         const category = await sqlUnsafe<any>(query, values)
 
         // Get counts and parent
         const productsCount = await sqlQuery<{ count: string }>(sql`
-          SELECT COUNT(*) as count FROM products WHERE "categoryId" = ${id}
+          SELECT COUNT(*) as count FROM products WHERE "categoryId" = ${id} AND "companyId" = ${ctx.companyId}
         `)
         const childrenCount = await sqlQuery<{ count: string }>(sql`
-          SELECT COUNT(*) as count FROM categories WHERE "parentId" = ${id}
+          SELECT COUNT(*) as count FROM categories WHERE "parentId" = ${id} AND "companyId" = ${ctx.companyId}
         `)
         const parent = category[0].parentId
           ? await sqlQuery<any>(sql`SELECT id, name FROM categories WHERE id = ${category[0].parentId} LIMIT 1`)
@@ -404,11 +417,13 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   // DELETE /api/shopflow/categories/:id - Delete category
   fastify.delete<{ Params: { id: string } }>('/api/shopflow/categories/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       // Check if category exists
       const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM categories WHERE id = ${id} LIMIT 1
+        SELECT id FROM categories WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
 
       if (existing.length === 0) {
@@ -421,7 +436,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
 
       // Check if category has products
       const productsCount = await sqlQuery<{ count: string }>(sql`
-        SELECT COUNT(*) as count FROM products WHERE "categoryId" = ${id}
+        SELECT COUNT(*) as count FROM products WHERE "categoryId" = ${id} AND "companyId" = ${ctx.companyId}
       `)
 
       if (parseInt(productsCount[0]?.count || '0') > 0) {
@@ -434,7 +449,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
 
       // Check if category has children
       const childrenCount = await sqlQuery<{ count: string }>(sql`
-        SELECT COUNT(*) as count FROM categories WHERE "parentId" = ${id}
+        SELECT COUNT(*) as count FROM categories WHERE "parentId" = ${id} AND "companyId" = ${ctx.companyId}
       `)
 
       if (parseInt(childrenCount[0]?.count || '0') > 0) {
@@ -445,7 +460,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
         }
       }
 
-      await sqlQuery(sql`DELETE FROM categories WHERE id = ${id}`)
+      await sqlQuery(sql`DELETE FROM categories WHERE id = ${id} AND "companyId" = ${ctx.companyId}`)
 
       return {
         success: true,

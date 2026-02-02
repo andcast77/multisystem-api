@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/stats - Sales statistics with date filters
@@ -10,6 +11,8 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/reports/stats', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { startDate, endDate } = request.query
 
       let query = sql`
@@ -19,7 +22,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           COALESCE(SUM(tax), 0) as "totalTax",
           COALESCE(SUM(COALESCE(discount, 0)), 0) as "totalDiscount"
         FROM sales
-        WHERE status = 'COMPLETED'
+        WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
       `
 
       if (startDate) {
@@ -74,22 +77,24 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/reports/daily', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const days = parseInt(request.query.days || '30')
       const startDate = new Date()
       startDate.setDate(startDate.getDate() - (days - 1))
       startDate.setHours(0, 0, 0, 0)
 
-      const sales = (await sql`
+      const sales = (await sqlQuery(sql`
         SELECT 
           DATE("createdAt") as date,
           COUNT(*) as sales,
           COALESCE(SUM(total), 0) as revenue
         FROM sales
-        WHERE status = 'COMPLETED'
+        WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${startDate}
         GROUP BY DATE("createdAt")
         ORDER BY date ASC
-      `) as Array<{ date: Date; sales: string; revenue: string }>
+      `)) as Array<{ date: Date; sales: string; revenue: string }>
 
       // Create a map for quick lookup
       const salesMap = new Map<string, { sales: number; revenue: number }>()
@@ -141,6 +146,8 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/reports/top-products', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const limit = parseInt(request.query.limit || '10')
       const { startDate, endDate, categoryId } = request.query
 
@@ -151,9 +158,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           SUM(si.quantity) as quantity,
           SUM(si.subtotal) as revenue,
           COUNT(DISTINCT si."saleId") as "salesCount"
-        FROM "saleItems" si
-        INNER JOIN products p ON si."productId" = p.id
-        INNER JOIN sales s ON si."saleId" = s.id
+        FROM sale_items si
+        INNER JOIN products p ON si."productId" = p.id AND p."companyId" = ${ctx.companyId}
+        INNER JOIN sales s ON si."saleId" = s.id AND s."companyId" = ${ctx.companyId}
         WHERE s.status = 'COMPLETED'
       `
 
@@ -176,7 +183,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         LIMIT ${limit}
       `
 
-      const results = (await query) as Array<{
+      const results = (await sqlQuery(query)) as Array<{
         productId: string
         productName: string
         quantity: string
@@ -216,6 +223,8 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/reports/payment-methods', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { startDate, endDate } = request.query
 
       let query = sql`
@@ -224,7 +233,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           COUNT(*) as count,
           COALESCE(SUM(total), 0) as total
         FROM sales
-        WHERE status = 'COMPLETED'
+        WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
       `
 
       if (startDate) {
@@ -240,7 +249,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         GROUP BY "paymentMethod"
       `
 
-      const results = (await query) as Array<{
+      const results = (await sqlQuery(query)) as Array<{
         paymentMethod: string
         count: string
         total: string
@@ -271,7 +280,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/inventory - Inventory statistics
   fastify.get('/api/shopflow/reports/inventory', async (request, reply) => {
     try {
-      const products = (await sql`
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
+      const products = (await sqlQuery(sql`
         SELECT 
           id,
           name,
@@ -280,10 +291,10 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           cost,
           "minStock"
         FROM products
-        WHERE active = true
+        WHERE "companyId" = ${ctx.companyId} AND active = true
         ORDER BY stock ASC
         LIMIT 10
-      `) as Array<{
+      `)) as Array<{
         id: string
         name: string
         stock: number
@@ -300,7 +311,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           COALESCE(SUM(stock * COALESCE(cost, 0)), 0) as "totalValue",
           COALESCE(SUM(stock * price), 0) as "totalRetailValue"
         FROM products
-        WHERE active = true
+        WHERE "companyId" = ${ctx.companyId} AND active = true
       `)
       const stats = statsResult[0] as {
         totalProducts: string
@@ -343,22 +354,24 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/today - Today's statistics
   fastify.get('/api/shopflow/reports/today', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const endOfDay = new Date(today)
       endOfDay.setHours(23, 59, 59, 999)
 
-      const result = (await sql`
+      const result = (await sqlQuery(sql`
         SELECT 
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue",
           COALESCE(SUM(tax), 0) as "totalTax",
           COALESCE(SUM(COALESCE(discount, 0)), 0) as "totalDiscount"
         FROM sales
-        WHERE status = 'COMPLETED'
+        WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${today}
           AND "createdAt" <= ${endOfDay}
-      `) as Array<{
+      `)) as Array<{
         salesCount: string
         totalRevenue: string
         totalTax: string
@@ -398,6 +411,8 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/week - This week's statistics
   fastify.get('/api/shopflow/reports/week', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const today = new Date()
       const dayOfWeek = today.getDay()
       const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1) // Monday
@@ -407,17 +422,17 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       endOfWeek.setDate(endOfWeek.getDate() + 6)
       endOfWeek.setHours(23, 59, 59, 999)
 
-      const result = (await sql`
+      const result = (await sqlQuery(sql`
         SELECT 
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue",
           COALESCE(SUM(tax), 0) as "totalTax",
           COALESCE(SUM(COALESCE(discount, 0)), 0) as "totalDiscount"
         FROM sales
-        WHERE status = 'COMPLETED'
+        WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${startOfWeek}
           AND "createdAt" <= ${endOfWeek}
-      `) as Array<{
+      `)) as Array<{
         salesCount: string
         totalRevenue: string
         totalTax: string
@@ -457,23 +472,25 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/month - This month's statistics
   fastify.get('/api/shopflow/reports/month', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const today = new Date()
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
       startOfMonth.setHours(0, 0, 0, 0)
       const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
       endOfMonth.setHours(23, 59, 59, 999)
 
-      const result = (await sql`
+      const result = (await sqlQuery(sql`
         SELECT 
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue",
           COALESCE(SUM(tax), 0) as "totalTax",
           COALESCE(SUM(COALESCE(discount, 0)), 0) as "totalDiscount"
         FROM sales
-        WHERE status = 'COMPLETED'
+        WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${startOfMonth}
           AND "createdAt" <= ${endOfMonth}
-      `) as Array<{
+      `)) as Array<{
         salesCount: string
         totalRevenue: string
         totalTax: string
@@ -519,16 +536,18 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/reports/by-user/:userId', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { userId } = request.params
       const { startDate, endDate } = request.query
 
       // Get user info
-      const users = (await sql`
+      const users = (await sqlQuery(sql`
         SELECT id, email
         FROM users
         WHERE id = ${userId}
         LIMIT 1
-      `) as Array<{ id: string; email: string }>
+      `)) as Array<{ id: string; email: string }>
 
       if (users.length === 0) {
         reply.code(404)
@@ -545,7 +564,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue"
         FROM sales
-        WHERE "userId" = ${userId}
+        WHERE "companyId" = ${ctx.companyId} AND "userId" = ${userId}
           AND status = 'COMPLETED'
       `
 
@@ -557,7 +576,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         query = sql`${query} AND "createdAt" <= ${new Date(endDate)}`
       }
 
-      const result = (await query) as Array<{
+      const result = (await sqlQuery(query)) as Array<{
         salesCount: string
         totalRevenue: string
       }>

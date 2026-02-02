@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/action-history - Log an action
@@ -15,6 +16,8 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/action-history', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { userId, action, entityType, entityId, details, ipAddress, userAgent } = request.body
 
       if (!userId || !action || !entityType) {
@@ -26,8 +29,9 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
       }
 
       const result = await sqlQuery(sql`
-        INSERT INTO "actionHistory" (
+        INSERT INTO action_history (
           id,
+          "companyId",
           "userId",
           action,
           "entityType",
@@ -38,6 +42,7 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
         )
         VALUES (
           gen_random_uuid(),
+          ${ctx.companyId},
           ${userId},
           ${action},
           ${entityType},
@@ -79,6 +84,8 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/action-history', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const {
         userId,
         action,
@@ -97,6 +104,7 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
       let query = sql`
         SELECT 
           ah.id,
+          ah."companyId",
           ah."userId",
           ah.action,
           ah."entityType",
@@ -109,9 +117,9 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
           u.email as "user.name",
           u.email as "user.email",
           u.role as "user.role"
-        FROM "actionHistory" ah
+        FROM action_history ah
         INNER JOIN users u ON ah."userId" = u.id
-        WHERE 1=1
+        WHERE ah."companyId" = ${ctx.companyId}
       `
 
       if (userId) {
@@ -141,8 +149,8 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
       // Get total count
       const countQuery = sql`
         SELECT COUNT(*) as total
-        FROM "actionHistory" ah
-        WHERE 1=1
+        FROM action_history ah
+        WHERE ah."companyId" = ${ctx.companyId}
           ${userId ? sql`AND ah."userId" = ${userId}` : sql``}
           ${action ? sql`AND ah.action = ${action}` : sql``}
           ${entityType ? sql`AND ah."entityType" = ${entityType}` : sql``}
@@ -221,11 +229,12 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
     try {
       const { userId } = request.params
       const queryParams = { ...request.query, userId }
-      // Redirect to main endpoint with userId in query
+      const authHeader = request.headers.authorization
       const response = await fastify.inject({
         method: 'GET',
         url: '/api/shopflow/action-history',
         query: queryParams as any,
+        headers: authHeader ? { authorization: authHeader } : {},
       })
       return JSON.parse(response.body)
     } catch (error) {
@@ -255,11 +264,12 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
     try {
       const { entityType, entityId } = request.params
       const queryParams = { ...request.query, entityType, entityId }
-      // Redirect to main endpoint with entityType and entityId in query
+      const authHeader = request.headers.authorization
       const response = await fastify.inject({
         method: 'GET',
         url: '/api/shopflow/action-history',
         query: queryParams as any,
+        headers: authHeader ? { authorization: authHeader } : {},
       })
       return JSON.parse(response.body)
     } catch (error) {

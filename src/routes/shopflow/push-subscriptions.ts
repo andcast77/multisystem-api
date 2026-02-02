@@ -1,13 +1,20 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowPushSubscriptionsRoutes(fastify: FastifyInstance) {
-  // GET /api/shopflow/users/:userId/push-subscriptions - List user's push subscriptions
+  // GET /api/shopflow/users/:userId/push-subscriptions - List user's push subscriptions (own only)
   fastify.get<{ Params: { userId: string } }>(
     '/api/shopflow/users/:userId/push-subscriptions',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { userId } = request.params
+        if (userId !== ctx.userId) {
+          reply.code(403)
+          return { success: false, error: 'Solo puedes ver tus propias suscripciones' }
+        }
         const rows = await sqlQuery<any>(sql`
           SELECT id, "userId", endpoint, p256dh, auth, "createdAt"
           FROM "pushSubscriptions"
@@ -33,24 +40,27 @@ export async function shopflowPushSubscriptionsRoutes(fastify: FastifyInstance) 
     }
   )
 
-  // POST /api/shopflow/push-subscriptions - Register a push subscription
+  // POST /api/shopflow/push-subscriptions - Register a push subscription (for authenticated user)
   fastify.post<{
     Body: {
-      userId: string
+      userId?: string
       endpoint: string
       p256dh: string
       auth: string
     }
   }>('/api/shopflow/push-subscriptions', async (request, reply) => {
     try {
-      const { userId, endpoint, p256dh, auth } = request.body
-      if (!userId || !endpoint || !p256dh || !auth) {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
+      const { userId: bodyUserId, endpoint, p256dh, auth } = request.body
+      if (!endpoint || !p256dh || !auth) {
         reply.code(400)
-        return { success: false, error: 'userId, endpoint, p256dh y auth son requeridos' }
+        return { success: false, error: 'endpoint, p256dh y auth son requeridos' }
       }
+      const userId = bodyUserId && bodyUserId === ctx.userId ? bodyUserId : ctx.userId
 
       const existing = await sqlQuery<any>(sql`
-        SELECT id FROM "pushSubscriptions" WHERE endpoint = ${endpoint} LIMIT 1
+        SELECT id, "userId" FROM "pushSubscriptions" WHERE endpoint = ${endpoint} LIMIT 1
       `)
       if (existing.length > 0) {
         await sqlQuery(sql`
@@ -82,11 +92,13 @@ export async function shopflowPushSubscriptionsRoutes(fastify: FastifyInstance) 
     }
   })
 
-  // DELETE /api/shopflow/push-subscriptions?endpoint= - Remove subscription by endpoint
+  // DELETE /api/shopflow/push-subscriptions?endpoint= - Remove subscription by endpoint (own only)
   fastify.delete<{ Querystring: { endpoint: string } }>(
     '/api/shopflow/push-subscriptions',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { endpoint } = request.query
         if (!endpoint) {
           reply.code(400)
@@ -95,11 +107,15 @@ export async function shopflowPushSubscriptionsRoutes(fastify: FastifyInstance) 
 
         const decoded = decodeURIComponent(endpoint)
         const existing = await sqlQuery<any>(sql`
-          SELECT id FROM "pushSubscriptions" WHERE endpoint = ${decoded} LIMIT 1
+          SELECT id, "userId" FROM "pushSubscriptions" WHERE endpoint = ${decoded} LIMIT 1
         `)
         if (existing.length === 0) {
           reply.code(404)
           return { success: false, error: 'Suscripción no encontrada' }
+        }
+        if ((existing[0] as { userId: string }).userId !== ctx.userId) {
+          reply.code(403)
+          return { success: false, error: 'Solo puedes eliminar tus propias suscripciones' }
         }
 
         await sqlQuery(sql`DELETE FROM "pushSubscriptions" WHERE endpoint = ${decoded}`)

@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/notifications - Create notification
@@ -16,6 +17,8 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/notifications', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { userId, type, priority, title, message, data, actionUrl, expiresAt } = request.body
 
       if (!userId || !type || !title || !message) {
@@ -30,6 +33,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         INSERT INTO notifications (
           id,
           "userId",
+          "companyId",
           type,
           priority,
           title,
@@ -42,6 +46,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         VALUES (
           gen_random_uuid(),
           ${userId},
+          ${ctx.companyId},
           ${type},
           ${priority || 'MEDIUM'},
           ${title},
@@ -99,6 +104,8 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/notifications', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const {
         userId,
         type,
@@ -128,7 +135,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
           "createdAt",
           "updatedAt"
         FROM notifications
-        WHERE 1=1
+        WHERE "companyId" = ${ctx.companyId}
       `
 
       if (userId) {
@@ -157,7 +164,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       const countQuery = sql`
         SELECT COUNT(*) as total
         FROM notifications
-        WHERE 1=1
+        WHERE "companyId" = ${ctx.companyId}
           ${userId ? sql`AND "userId" = ${userId}` : sql``}
           ${type ? sql`AND type = ${type}` : sql``}
           ${status ? sql`AND status = ${status}` : sql``}
@@ -214,6 +221,8 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/notifications/:id/read', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const { userId } = request.body
 
@@ -225,11 +234,11 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Check if notification exists and belongs to user
+      // Check if notification exists and belongs to user (same company)
       const existing = await sqlQuery(sql`
         SELECT id, "userId"
         FROM notifications
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 
@@ -249,11 +258,11 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      await sql`
+      await sqlQuery(sql`
         UPDATE notifications
         SET status = 'READ', "readAt" = NOW()
-        WHERE id = ${id}
-      `
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
+      `)
 
       return {
         success: true,
@@ -279,6 +288,8 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/notifications/:id/unread', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const { userId } = request.body
 
@@ -290,11 +301,11 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Check if notification exists and belongs to user
+      // Check if notification exists and belongs to user (same company)
       const existing = await sqlQuery(sql`
         SELECT id, "userId"
         FROM notifications
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         LIMIT 1
       `)
 

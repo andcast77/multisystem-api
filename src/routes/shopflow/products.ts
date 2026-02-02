@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 export type Product = {
   id: string
@@ -38,6 +39,8 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/products', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const {
         search,
         categoryId,
@@ -54,10 +57,10 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       // Single lookup by sku or barcode
       if (sku) {
         const rows = await sqlQuery<any>(sql`
-          SELECT id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+          SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
             "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
           FROM products
-          WHERE sku = ${sku}
+          WHERE "companyId" = ${ctx.companyId} AND sku = ${sku}
           LIMIT 1
         `)
         if (rows.length === 0) {
@@ -68,10 +71,10 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       }
       if (barcode) {
         const rows = await sqlQuery<any>(sql`
-          SELECT id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+          SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
             "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
           FROM products
-          WHERE barcode = ${barcode}
+          WHERE "companyId" = ${ctx.companyId} AND barcode = ${barcode}
           LIMIT 1
         `)
         if (rows.length === 0) {
@@ -87,11 +90,11 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
 
       let query = sql`
         SELECT 
-          p.id, p.name, p.description, p.sku, p.barcode, p.price, p.cost, p.stock,
+          p.id, p."companyId", p.name, p.description, p.sku, p.barcode, p.price, p.cost, p.stock,
           p."minStock", p."maxStock", p."categoryId", p."supplierId", p."storeId",
           p.active, p."imageUrl", p."createdAt", p."updatedAt"
         FROM products p
-        WHERE 1=1
+        WHERE p."companyId" = ${ctx.companyId}
       `
 
       if (search) {
@@ -123,7 +126,7 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       }
 
       const countQuery = sql`
-        SELECT COUNT(*) as total FROM products p WHERE 1=1
+        SELECT COUNT(*) as total FROM products p WHERE p."companyId" = ${ctx.companyId}
         ${search ? sql`AND (p.name ILIKE ${`%${search}%`} OR p.description ILIKE ${`%${search}%`} OR p.sku ILIKE ${`%${search}%`})` : sql``}
         ${categoryId !== undefined ? (categoryId === 'null' ? sql`AND p."categoryId" IS NULL` : sql`AND p."categoryId" = ${categoryId}`) : sql``}
         ${active !== undefined ? sql`AND p.active = ${active === 'true'}` : sql``}
@@ -170,21 +173,23 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
     Querystring: { minStockThreshold?: string }
   }>('/api/shopflow/products/low-stock', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { minStockThreshold } = request.query
       const threshold = minStockThreshold != null ? parseInt(minStockThreshold) : undefined
 
       let query = sql`
-        SELECT id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+        SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
           "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
         FROM products
-        WHERE active = true AND stock <= COALESCE("minStock", 0)
+        WHERE "companyId" = ${ctx.companyId} AND active = true AND stock <= COALESCE("minStock", 0)
       `
       if (threshold != null && !isNaN(threshold)) {
         query = sql`
-          SELECT id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+          SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
             "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
           FROM products
-          WHERE active = true AND stock <= ${threshold}
+          WHERE "companyId" = ${ctx.companyId} AND active = true AND stock <= ${threshold}
         `
       }
       const products = await sqlQuery<any>(query)
@@ -204,12 +209,14 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/products/:id
   fastify.get<{ Params: { id: string } }>('/api/shopflow/products/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const rows = await sqlQuery<any>(sql`
-        SELECT id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+        SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
           "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
         FROM products
-        WHERE id = ${id}
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         LIMIT 1
       `)
       if (rows.length === 0) {
@@ -249,13 +256,16 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/products', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const body = request.body
       const product = await sqlQuery<any>(sql`
         INSERT INTO products (
-          name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+          "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
           "categoryId", "supplierId", "storeId", active, "imageUrl"
         )
         VALUES (
+          ${ctx.companyId},
           ${body.name},
           ${body.description ?? null},
           ${body.sku ?? null},
@@ -271,7 +281,7 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
           ${body.active ?? true},
           ${body.imageUrl ?? null}
         )
-        RETURNING id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+        RETURNING id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
           "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
       `)
       return { success: true, data: product[0] }
@@ -312,11 +322,13 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
     }>
   }>('/api/shopflow/products/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const body = request.body
 
       const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM products WHERE id = ${id} LIMIT 1
+        SELECT id FROM products WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
       if (existing.length === 0) {
         reply.code(404)
@@ -347,19 +359,21 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
 
       if (updates.length === 0) {
         const rows = await sqlQuery<any>(sql`
-          SELECT id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+          SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
             "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
-          FROM products WHERE id = ${id} LIMIT 1
+          FROM products WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         return { success: true, data: rows[0] }
       }
 
       updates.push('"updatedAt" = NOW()')
-      values.push(id)
+      values.push(ctx.companyId, id)
+      const idParam = values.length
+      const companyParam = values.length - 1
       const q = `
         UPDATE products SET ${updates.join(', ')}
-        WHERE id = $${values.length}
-        RETURNING id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+        WHERE id = $${idParam} AND "companyId" = $${companyParam}
+        RETURNING id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
           "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
       `
       const product = await sqlUnsafe<any>(q, values)
@@ -386,11 +400,13 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
     Body: { stock: number; minStock?: number }
   }>('/api/shopflow/products/:id/inventory', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
       const { stock, minStock } = request.body
 
       const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM products WHERE id = ${id} LIMIT 1
+        SELECT id FROM products WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
       if (existing.length === 0) {
         reply.code(404)
@@ -402,15 +418,15 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
           ? await sqlQuery<any>(sql`
               UPDATE products
               SET stock = ${stock}, "minStock" = ${minStock}, "updatedAt" = NOW()
-              WHERE id = ${id}
-              RETURNING id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+              WHERE id = ${id} AND "companyId" = ${ctx.companyId}
+              RETURNING id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
                 "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
             `)
           : await sqlQuery<any>(sql`
               UPDATE products
               SET stock = ${stock}, "updatedAt" = NOW()
-              WHERE id = ${id}
-              RETURNING id, name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+              WHERE id = ${id} AND "companyId" = ${ctx.companyId}
+              RETURNING id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
                 "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
             `)
       if (product.length === 0) {
@@ -433,17 +449,19 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
   // DELETE /api/shopflow/products/:id
   fastify.delete<{ Params: { id: string } }>('/api/shopflow/products/:id', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { id } = request.params
 
       const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM products WHERE id = ${id} LIMIT 1
+        SELECT id FROM products WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
       if (existing.length === 0) {
         reply.code(404)
         return { success: false, error: 'Producto no encontrado' }
       }
 
-      await sqlQuery(sql`DELETE FROM products WHERE id = ${id}`)
+      await sqlQuery(sql`DELETE FROM products WHERE id = ${id} AND "companyId" = ${ctx.companyId}`)
       return { success: true, data: { id } }
     } catch (error) {
       fastify.log.error(error)

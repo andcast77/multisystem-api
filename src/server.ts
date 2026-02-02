@@ -54,7 +54,8 @@ async function start() {
 
     // Registrar CORS con orígenes desde .env
     await fastify.register(cors, {
-      origin: config.CORS_ORIGIN.split(',')
+      origin: config.CORS_ORIGIN.split(','),
+      credentials: true
     })
 
     // Registrar rutas

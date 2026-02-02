@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
+import { getShopflowContext } from './auth-helper.js'
 
 const TRANSFER_STATUSES = ['PENDING', 'IN_TRANSIT', 'COMPLETED', 'CANCELLED'] as const
 
@@ -16,16 +17,18 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
     }
   }>('/api/shopflow/inventory-transfers', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { fromStoreId, toStoreId, productId, status, page = '1', limit = '20' } = request.query
       const pageNum = parseInt(page)
       const limitNum = Math.min(parseInt(limit) || 20, 100)
       const skip = (pageNum - 1) * limitNum
 
       let query = sql`
-        SELECT id, "fromStoreId", "toStoreId", "productId", quantity, notes, status,
+        SELECT id, "companyId", "fromStoreId", "toStoreId", "productId", quantity, notes, status,
           "createdById", "completedAt", "createdAt", "updatedAt"
-        FROM "inventoryTransfers"
-        WHERE 1=1
+        FROM inventory_transfers
+        WHERE "companyId" = ${ctx.companyId}
       `
       if (fromStoreId) query = sql`${query} AND "fromStoreId" = ${fromStoreId}`
       if (toStoreId) query = sql`${query} AND "toStoreId" = ${toStoreId}`
@@ -35,8 +38,8 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
       }
 
       const countResult = await sqlQuery<{ total: string }>(sql`
-        SELECT COUNT(*) as total FROM "inventoryTransfers" t
-        WHERE 1=1
+        SELECT COUNT(*) as total FROM inventory_transfers t
+        WHERE t."companyId" = ${ctx.companyId}
         ${fromStoreId ? sql`AND t."fromStoreId" = ${fromStoreId}` : sql``}
         ${toStoreId ? sql`AND t."toStoreId" = ${toStoreId}` : sql``}
         ${productId ? sql`AND t."productId" = ${productId}` : sql``}
@@ -87,6 +90,8 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
     }
   }>('/api/shopflow/inventory-transfers', async (request, reply) => {
     try {
+      const ctx = await getShopflowContext(request, reply)
+      if (!ctx) return
       const { fromStoreId, toStoreId, productId, quantity, notes, createdById } = request.body
 
       if (fromStoreId === toStoreId) {
@@ -95,7 +100,7 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
       }
 
       const product = await sqlQuery<any>(sql`
-        SELECT id, stock, "storeId" FROM products WHERE id = ${productId} LIMIT 1
+        SELECT id, stock, "storeId" FROM products WHERE id = ${productId} AND "companyId" = ${ctx.companyId} LIMIT 1
       `)
       if (product.length === 0) {
         reply.code(404)
@@ -107,11 +112,11 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
       }
 
       const transfer = await sqlQuery<any>(sql`
-        INSERT INTO "inventoryTransfers" (
-          "fromStoreId", "toStoreId", "productId", quantity, notes, status, "createdById"
+        INSERT INTO inventory_transfers (
+          "companyId", "fromStoreId", "toStoreId", "productId", quantity, notes, status, "createdById"
         )
-        VALUES (${fromStoreId}, ${toStoreId}, ${productId}, ${quantity}, ${notes ?? null}, 'PENDING', ${createdById})
-        RETURNING id, "fromStoreId", "toStoreId", "productId", quantity, notes, status,
+        VALUES (${ctx.companyId}, ${fromStoreId}, ${toStoreId}, ${productId}, ${quantity}, ${notes ?? null}, 'PENDING', ${createdById})
+        RETURNING id, "companyId", "fromStoreId", "toStoreId", "productId", quantity, notes, status,
           "createdById", "completedAt", "createdAt", "updatedAt"
       `)
 
@@ -133,11 +138,13 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
     '/api/shopflow/inventory-transfers/:id/complete',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { id } = request.params
 
         const existing = await sqlQuery<any>(sql`
           SELECT id, status, "productId", quantity, "fromStoreId", "toStoreId"
-          FROM "inventoryTransfers" WHERE id = ${id} LIMIT 1
+          FROM inventory_transfers WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         if (existing.length === 0) {
           reply.code(404)
@@ -155,22 +162,22 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
 
         await sqlQuery(sql`
           UPDATE products SET stock = stock - ${qty}, "updatedAt" = NOW()
-          WHERE id = ${productId} AND ("storeId" IS NOT DISTINCT FROM ${fromStoreId})
+          WHERE id = ${productId} AND "companyId" = ${ctx.companyId} AND ("storeId" IS NOT DISTINCT FROM ${fromStoreId})
         `)
         await sqlQuery(sql`
           UPDATE products SET "storeId" = ${toStoreId}, "updatedAt" = NOW()
-          WHERE id = ${productId}
+          WHERE id = ${productId} AND "companyId" = ${ctx.companyId}
         `)
         await sqlQuery(sql`
-          UPDATE "inventoryTransfers"
+          UPDATE inventory_transfers
           SET status = 'COMPLETED', "completedAt" = NOW(), "updatedAt" = NOW()
-          WHERE id = ${id}
+          WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         `)
 
         const updated = await sqlQuery<any>(sql`
-          SELECT id, "fromStoreId", "toStoreId", "productId", quantity, notes, status,
+          SELECT id, "companyId", "fromStoreId", "toStoreId", "productId", quantity, notes, status,
             "createdById", "completedAt", "createdAt", "updatedAt"
-          FROM "inventoryTransfers" WHERE id = ${id} LIMIT 1
+          FROM inventory_transfers WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         return { success: true, data: updated[0] }
       } catch (error) {
@@ -191,10 +198,12 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
     '/api/shopflow/inventory-transfers/:id/cancel',
     async (request, reply) => {
       try {
+        const ctx = await getShopflowContext(request, reply)
+        if (!ctx) return
         const { id } = request.params
 
         const existing = await sqlQuery<any>(sql`
-          SELECT id, status FROM "inventoryTransfers" WHERE id = ${id} LIMIT 1
+          SELECT id, status FROM inventory_transfers WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         if (existing.length === 0) {
           reply.code(404)
@@ -206,15 +215,15 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
         }
 
         await sqlQuery(sql`
-          UPDATE "inventoryTransfers"
+          UPDATE inventory_transfers
           SET status = 'CANCELLED', "updatedAt" = NOW()
-          WHERE id = ${id}
+          WHERE id = ${id} AND "companyId" = ${ctx.companyId}
         `)
 
         const updated = await sqlQuery<any>(sql`
-          SELECT id, "fromStoreId", "toStoreId", "productId", quantity, notes, status,
+          SELECT id, "companyId", "fromStoreId", "toStoreId", "productId", quantity, notes, status,
             "createdById", "completedAt", "createdAt", "updatedAt"
-          FROM "inventoryTransfers" WHERE id = ${id} LIMIT 1
+          FROM inventory_transfers WHERE id = ${id} AND "companyId" = ${ctx.companyId} LIMIT 1
         `)
         return { success: true, data: updated[0] }
       } catch (error) {
