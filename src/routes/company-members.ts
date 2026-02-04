@@ -55,7 +55,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
                  u.email, u."firstName", u."lastName"
           FROM company_members cm
           JOIN users u ON u.id = cm."userId"
-          WHERE cm."companyId" = ${companyId}
+          WHERE cm."companyId" = ${companyId} AND u."isSuperuser" = false
           ORDER BY cm."membershipRole" = 'OWNER' DESC, u."firstName", u."lastName"
         `) as MemberRow[]
       } catch {
@@ -65,7 +65,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
                  u.email, u."firstName", u."lastName"
           FROM user_roles ur
           JOIN users u ON u.id = ur."userId"
-          WHERE ur."companyId" = ${companyId}
+          WHERE ur."companyId" = ${companyId} AND u."isSuperuser" = false
         `) as Array<{ id: string; userId: string; companyId: string; email: string; firstName: string; lastName: string }>
         members = fallback.map((r) => ({
           id: r.id,

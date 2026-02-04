@@ -34,12 +34,20 @@ export async function sqlQuery<T = any>(query: Promise<any>): Promise<T[]> {
   return result ? [result] as T[] : []
 }
 
-// Helper function for unsafe queries with parameter substitution
+// Helper for parameterized queries with $1, $2 placeholders.
+// Uses the Neon client's .query(string, params) (getSql() is the client).
 export async function sqlUnsafe<T = any>(query: string, values?: any[]): Promise<T[]> {
-  // Use sql.unsafe directly - Neon supports this signature
-  const result = values ? await (sql.unsafe as any)(query, values) : await (sql.unsafe as any)(query)
+  const client = getSql()
+  const queryFn = (client as { query?: (q: string, v?: any[]) => Promise<any> }).query
+  if (typeof queryFn !== 'function') {
+    throw new Error('Neon client does not support .query(); use sql`...` tagged template for dynamic queries.')
+  }
+  const result = values ? await queryFn(query, values) : await queryFn(query)
   if (Array.isArray(result)) {
     return result as T[]
+  }
+  if (result && typeof result === 'object' && 'rows' in result && Array.isArray((result as any).rows)) {
+    return (result as any).rows as T[]
   }
   return result ? [result] as T[] : []
 }

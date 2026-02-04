@@ -232,9 +232,11 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
         }
       }
 
+      const id = crypto.randomUUID()
+      const now = new Date()
       const category = await sqlQuery<any>(sql`
-        INSERT INTO categories ("companyId", name, description, "parentId")
-        VALUES (${ctx.companyId}, ${name}, ${description}, ${parentId})
+        INSERT INTO categories (id, "companyId", name, description, "parentId", "createdAt", "updatedAt")
+        VALUES (${id}, ${ctx.companyId}, ${name}, ${description}, ${parentId}, ${now}, ${now})
         RETURNING id, "companyId", name, description, "parentId", "createdAt", "updatedAt"
       `)
 

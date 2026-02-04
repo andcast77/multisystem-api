@@ -384,7 +384,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Get user from database (schema: firstName, lastName, isActive)
+      // Get user from database (incl. empresa preferida Shopflow)
       const users = (await sql`
         SELECT 
           id,
@@ -394,11 +394,12 @@ export async function authRoutes(fastify: FastifyInstance) {
           "firstName",
           "lastName",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "shopflowPreferredCompanyId"
         FROM users
         WHERE id = ${decoded.id}
         LIMIT 1
-      `) as User[]
+      `) as (User & { shopflowPreferredCompanyId?: string | null })[]
 
       if (users.length === 0) {
         reply.code(404)
@@ -418,7 +419,51 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
+      const row = user as Record<string, unknown>
+      let preferredCompanyId: string | null =
+        (row.shopflowPreferredCompanyId as string | null | undefined) ??
+        (row.shopflowpreferredcompanyid as string | null | undefined) ??
+        null
+
+      // Si el usuario no tiene empresa preferida, asignar una en BD antes de responder
+      if (!preferredCompanyId) {
+        let defaultCompanyId: string | null = null
+        if (decoded.isSuperuser) {
+          const rows = (await sql`
+            SELECT id FROM companies WHERE "isActive" = true ORDER BY name LIMIT 1
+          `) as Array<{ id: string }>
+          defaultCompanyId = rows[0]?.id ?? null
+        } else {
+          try {
+            const rows = (await sql`
+              SELECT c.id FROM company_members cm
+              JOIN companies c ON c.id = cm."companyId"
+              WHERE cm."userId" = ${decoded.id} AND c."isActive" = true
+              ORDER BY c.name LIMIT 1
+            `) as Array<{ id: string }>
+            defaultCompanyId = rows[0]?.id ?? null
+          } catch {
+            const rows = (await sql`
+              SELECT c.id FROM user_roles ur
+              JOIN companies c ON c.id = ur."companyId"
+              WHERE ur."userId" = ${decoded.id} AND c."isActive" = true
+              ORDER BY c.name LIMIT 1
+            `) as Array<{ id: string }>
+            defaultCompanyId = rows[0]?.id ?? null
+          }
+        }
+        if (defaultCompanyId) {
+          await sql`
+            UPDATE users SET "shopflowPreferredCompanyId" = ${defaultCompanyId}
+            WHERE id = ${decoded.id}
+          `
+          preferredCompanyId = defaultCompanyId
+        }
+      }
+
       let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean } | null = null
+      let responseCompanyId: string | undefined = decoded.companyId
+
       if (decoded.companyId) {
         const rows = (await sql`
           SELECT id, name, "workifyEnabled", "shopflowEnabled"
@@ -427,12 +472,27 @@ export async function authRoutes(fastify: FastifyInstance) {
         company = rows[0] ?? null
       }
 
+      // Si la respuesta quedaría sin companyId válido (token sin company, company inactiva/inexistente),
+      // usar empresa preferida (o asignar una en BD) y sincronizar en la respuesta antes de responder.
+      if (!responseCompanyId || !company) {
+        const effectiveId = preferredCompanyId
+        if (effectiveId) {
+          responseCompanyId = effectiveId
+          const rows = (await sql`
+            SELECT id, name, "workifyEnabled", "shopflowEnabled"
+            FROM companies WHERE id = ${effectiveId} AND "isActive" = true LIMIT 1
+          `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+          company = rows[0] ?? null
+        }
+      }
+
       return {
         success: true,
         data: {
           ...user,
           name: userDisplayName(user),
-          companyId: decoded.companyId,
+          companyId: responseCompanyId,
+          preferredCompanyId: preferredCompanyId ?? undefined,
           membershipRole: decoded.membershipRole,
           isSuperuser: decoded.isSuperuser,
           company: company ?? undefined,
@@ -629,6 +689,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         isSuperuser: decoded.isSuperuser,
         membershipRole: membershipRole ?? undefined,
       })
+
+      await sql`
+        UPDATE users SET "shopflowPreferredCompanyId" = ${companyId}
+        WHERE id = ${decoded.id}
+      `
 
       const companyRows = (await sql`
         SELECT id, name, "workifyEnabled", "shopflowEnabled"

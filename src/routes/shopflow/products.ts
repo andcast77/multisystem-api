@@ -36,6 +36,8 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       barcode?: string
       page?: string
       limit?: string
+      sortBy?: string
+      sortOrder?: string
     }
   }>('/api/shopflow/products', async (request, reply) => {
     try {
@@ -52,6 +54,8 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
         barcode,
         page = '1',
         limit = '20',
+        sortBy = 'name',
+        sortOrder = 'asc',
       } = request.query
 
       // Single lookup by sku or barcode
@@ -92,8 +96,10 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
         SELECT 
           p.id, p."companyId", p.name, p.description, p.sku, p.barcode, p.price, p.cost, p.stock,
           p."minStock", p."maxStock", p."categoryId", p."supplierId", p."storeId",
-          p.active, p."imageUrl", p."createdAt", p."updatedAt"
+          p.active, p."imageUrl", p."createdAt", p."updatedAt",
+          c.name as "categoryName"
         FROM products p
+        LEFT JOIN categories c ON c.id = p."categoryId" AND c."companyId" = p."companyId"
         WHERE p."companyId" = ${ctx.companyId}
       `
 
@@ -137,9 +143,24 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       const countResult = await sqlQuery<{ total: string }>(countQuery)
       const total = parseInt(countResult[0]?.total || '0')
 
+      const orderAsc =
+        sortBy === 'sku' ? sql`ORDER BY p.sku ASC` :
+        sortBy === 'price' ? sql`ORDER BY p.price ASC` :
+        sortBy === 'stock' ? sql`ORDER BY p.stock ASC` :
+        sortBy === 'active' ? sql`ORDER BY p.active ASC` :
+        sortBy === 'category' ? sql`ORDER BY c.name ASC NULLS LAST` :
+        sql`ORDER BY p.name ASC`
+      const orderDesc =
+        sortBy === 'sku' ? sql`ORDER BY p.sku DESC` :
+        sortBy === 'price' ? sql`ORDER BY p.price DESC` :
+        sortBy === 'stock' ? sql`ORDER BY p.stock DESC` :
+        sortBy === 'active' ? sql`ORDER BY p.active DESC` :
+        sortBy === 'category' ? sql`ORDER BY c.name DESC NULLS LAST` :
+        sql`ORDER BY p.name DESC`
+      const orderClause = sortOrder === 'desc' ? orderDesc : orderAsc
       query = sql`
         ${query}
-        ORDER BY p.name ASC
+        ${orderClause}
         LIMIT ${limitNum} OFFSET ${skip}
       `
       const products = await sqlQuery<any>(query)
@@ -259,12 +280,15 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
       const body = request.body
+      const id = crypto.randomUUID()
+      const now = new Date()
       const product = await sqlQuery<any>(sql`
         INSERT INTO products (
-          "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
-          "categoryId", "supplierId", "storeId", active, "imageUrl"
+          id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
+          "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
         )
         VALUES (
+          ${id},
           ${ctx.companyId},
           ${body.name},
           ${body.description ?? null},
@@ -279,7 +303,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
           ${body.supplierId ?? null},
           ${body.storeId ?? null},
           ${body.active ?? true},
-          ${body.imageUrl ?? null}
+          ${body.imageUrl ?? null},
+          ${now},
+          ${now}
         )
         RETURNING id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
           "categoryId", "supplierId", "storeId", active, "imageUrl", "createdAt", "updatedAt"
