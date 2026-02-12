@@ -58,6 +58,17 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
           WHERE cm."companyId" = ${companyId} AND u."isSuperuser" = false
           ORDER BY cm."membershipRole" = 'OWNER' DESC, u."firstName", u."lastName"
         `) as MemberRow[]
+        // For USER members, fetch storeIds from user_stores
+        for (const m of members) {
+          if (m.membershipRole === 'USER') {
+            const storeRows = (await sql`
+              SELECT us."storeId" FROM user_stores us
+              JOIN stores s ON s.id = us."storeId" AND s."companyId" = ${companyId}
+              WHERE us."userId" = ${m.userId}
+            `) as Array<{ storeId: string }>
+            ;(m as MemberRow & { storeIds?: string[] }).storeIds = storeRows.map((r) => r.storeId)
+          }
+        }
       } catch {
         // company_members may not exist; fallback: no members or user_roles
         const fallback = (await sql`
@@ -78,16 +89,23 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
         }))
       }
 
-      const data = members.map((m) => ({
-        id: m.id,
-        userId: m.userId,
-        email: m.email,
-        firstName: m.firstName,
-        lastName: m.lastName,
-        name: userDisplayName({ email: m.email, firstName: m.firstName, lastName: m.lastName }),
-        membershipRole: m.membershipRole,
-        createdAt: m.createdAt,
-      }))
+      const data = members.map((m) => {
+        const base = {
+          id: m.id,
+          userId: m.userId,
+          email: m.email,
+          firstName: m.firstName,
+          lastName: m.lastName,
+          name: userDisplayName({ email: m.email, firstName: m.firstName, lastName: m.lastName }),
+          membershipRole: m.membershipRole,
+          createdAt: m.createdAt,
+        }
+        const withStores = m as MemberRow & { storeIds?: string[] }
+        if (withStores.storeIds) {
+          return { ...base, storeIds: withStores.storeIds }
+        }
+        return base
+      })
 
       return { success: true, data }
     } catch (error) {
@@ -107,6 +125,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
       firstName?: string
       lastName?: string
       membershipRole: 'ADMIN' | 'USER'
+      storeIds?: string[]
     }
   }>('/api/companies/:companyId/members', async (request, reply) => {
     try {
@@ -131,7 +150,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
         return { success: false, error: 'Solo el owner o un admin pueden crear usuarios' }
       }
 
-      const { email, password, firstName = '', lastName = '', membershipRole } = request.body
+      const { email, password, firstName = '', lastName = '', membershipRole, storeIds } = request.body
       if (!email || !password) {
         reply.code(400)
         return { success: false, error: 'Email y contraseña son requeridos' }
@@ -173,6 +192,31 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
         return { success: false, error: 'Error al asignar usuario a la empresa (tabla company_members). Ejecuta migraciones.' }
       }
 
+      // For USER role: assign stores in user_stores. If storeIds empty/undefined, assign all company stores (backward compat).
+      if (membershipRole === 'USER') {
+        let idsToAssign: string[] = []
+        if (Array.isArray(storeIds) && storeIds.length > 0) {
+          for (const sid of storeIds) {
+            const rows = await sqlQuery<{ id: string }>(sql`
+              SELECT id FROM stores WHERE id = ${sid} AND "companyId" = ${companyId} LIMIT 1
+            `)
+            if (rows.length > 0) idsToAssign.push(sid)
+          }
+        } else {
+          const allStores = await sqlQuery<{ id: string }>(sql`
+            SELECT id FROM stores WHERE "companyId" = ${companyId} AND active = true
+          `)
+          idsToAssign = allStores.map((s) => s.id)
+        }
+        for (const storeId of idsToAssign) {
+          await sql`
+            INSERT INTO user_stores (id, "userId", "storeId", "createdAt")
+            VALUES (gen_random_uuid(), ${user.id}, ${storeId}, NOW())
+            ON CONFLICT ("userId", "storeId") DO NOTHING
+          `
+        }
+      }
+
       return {
         success: true,
         data: {
@@ -184,6 +228,80 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
           membershipRole,
         },
       }
+    } catch (error) {
+      fastify.log.error(error)
+      reply.code(500)
+      return { success: false, error: error instanceof Error ? error.message : 'Error' }
+    }
+  })
+
+  // PUT /api/companies/:companyId/members/:userId/stores - Update stores for a USER member (owner/admin only)
+  fastify.put<{
+    Params: { companyId: string; userId: string }
+    Headers: { authorization?: string }
+    Body: { storeIds: string[] }
+  }>('/api/companies/:companyId/members/:userId/stores', async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        reply.code(401)
+        return { success: false, error: 'Token de autenticación requerido' }
+      }
+      const decoded = verifyToken(authHeader.substring(7))
+      if (!decoded) {
+        reply.code(401)
+        return { success: false, error: 'Token inválido o expirado' }
+      }
+
+      const { companyId, userId } = request.params
+      const { storeIds } = request.body
+
+      if (!canAccessCompany(decoded, companyId)) {
+        reply.code(403)
+        return { success: false, error: 'No tienes acceso a esta empresa' }
+      }
+      if (!canManageMembers(decoded)) {
+        reply.code(403)
+        return { success: false, error: 'Solo el owner o un admin pueden modificar locales de usuarios' }
+      }
+
+      const member = await sqlQuery<{ membershipRole: string }>(sql`
+        SELECT "membershipRole" FROM company_members
+        WHERE "userId" = ${userId} AND "companyId" = ${companyId} LIMIT 1
+      `)
+      if (member.length === 0) {
+        reply.code(404)
+        return { success: false, error: 'Usuario no encontrado en esta empresa' }
+      }
+      if (member[0].membershipRole !== 'USER') {
+        reply.code(400)
+        return { success: false, error: 'Solo los usuarios con rol USER tienen locales asignados. Los owners y admins tienen acceso a todos.' }
+      }
+
+      const idsToAssign: string[] = []
+      if (Array.isArray(storeIds) && storeIds.length > 0) {
+        for (const sid of storeIds) {
+          const rows = await sqlQuery<{ id: string }>(sql`
+            SELECT id FROM stores WHERE id = ${sid} AND "companyId" = ${companyId} LIMIT 1
+          `)
+          if (rows.length > 0) idsToAssign.push(sid)
+        }
+      }
+
+      await sql`
+        DELETE FROM user_stores us
+        USING stores s
+        WHERE us."storeId" = s.id AND s."companyId" = ${companyId} AND us."userId" = ${userId}
+      `
+      for (const storeId of idsToAssign) {
+        await sql`
+          INSERT INTO user_stores (id, "userId", "storeId", "createdAt")
+          VALUES (gen_random_uuid(), ${userId}, ${storeId}, NOW())
+          ON CONFLICT ("userId", "storeId") DO NOTHING
+        `
+      }
+
+      return { success: true, data: { storeIds: idsToAssign } }
     } catch (error) {
       fastify.log.error(error)
       reply.code(500)

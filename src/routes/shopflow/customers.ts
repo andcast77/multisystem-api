@@ -45,9 +45,7 @@ export async function shopflowCustomersRoutes(fastify: FastifyInstance) {
         if (search) {
           query = sql`
             ${query}
-            AND (c.name ILIKE ${`%${search}%`} 
-              OR c.email ILIKE ${`%${search}%`} 
-              OR c.phone ILIKE ${`%${search}%`})
+            AND c.name ILIKE ${`%${search}%`}
           `
         }
 

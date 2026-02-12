@@ -4,6 +4,7 @@ import { getShopflowContext } from './auth-helper.js'
 
 export type Sale = {
   id: string
+  storeId: string | null
   customerId: string | null
   userId: string
   invoiceNumber: string | null
@@ -31,9 +32,10 @@ export type SaleItem = {
 }
 
 export async function shopflowSalesRoutes(fastify: FastifyInstance) {
-  // GET /api/shopflow/sales - List sales with filters
+  // GET /api/shopflow/sales - List sales with filters (storeId: USER = forced from context, OWNER/ADMIN = optional)
   fastify.get<{
     Querystring: {
+      storeId?: string
       customerId?: string
       userId?: string
       status?: string
@@ -48,6 +50,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
       const {
+        storeId: queryStoreId,
         customerId,
         userId,
         status,
@@ -58,6 +61,18 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         limit = '20',
       } = request.query
 
+      const isStoreAdmin = ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
+      const effectiveStoreId = isStoreAdmin
+        ? queryStoreId ?? undefined
+        : (queryStoreId || ctx.storeId) ?? null
+      if (!isStoreAdmin && !effectiveStoreId) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para listar ventas (usuario no administrador)',
+        })
+        return null
+      }
+
       const pageNum = parseInt(page)
       const limitNum = parseInt(limit)
       const skip = (pageNum - 1) * limitNum
@@ -66,6 +81,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         SELECT 
           s.id,
           s."companyId",
+          s."storeId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -81,6 +97,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         FROM sales s
         WHERE s."companyId" = ${ctx.companyId}
       `
+      if (effectiveStoreId) {
+        query = sql`${query} AND s."storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
 
       if (customerId) {
         query = sql`${query} AND s."customerId" = ${customerId}`
@@ -112,7 +131,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         FROM sales s
         WHERE s."companyId" = ${ctx.companyId}
       `
-      
+      if (effectiveStoreId) {
+        countQuery = sql`${countQuery} AND s."storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
       if (customerId) {
         countQuery = sql`${countQuery} AND s."customerId" = ${customerId}`
       }
@@ -228,7 +249,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/sales/:id - Get sale by ID
+  // GET /api/shopflow/sales/:id - Get sale by ID (USER can only read if sale.storeId matches their store)
   fastify.get<{ Params: { id: string } }>('/api/shopflow/sales/:id', async (request, reply) => {
     try {
       const ctx = await getShopflowContext(request, reply)
@@ -239,6 +260,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         SELECT 
           s.id,
           s."companyId",
+          s."storeId",
           s."customerId",
           s."userId",
           s."invoiceNumber",
@@ -262,6 +284,11 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
           success: false,
           error: 'Venta no encontrada',
         }
+      }
+      const isStoreAdminId = ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
+      if (!isStoreAdminId && ctx.storeId != null && sale[0].storeId !== ctx.storeId) {
+        reply.code(404)
+        return { success: false, error: 'Venta no encontrada' }
       }
 
       // Get customer
@@ -337,9 +364,10 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /api/shopflow/sales - Create sale
+  // POST /api/shopflow/sales - Create sale (storeId optional; USER must send X-Store-Id or body.storeId matching their store)
   fastify.post<{
     Body: {
+      storeId?: string | null
       customerId?: string | null
       userId: string
       items: Array<{
@@ -358,8 +386,33 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
-      const { customerId, userId, items, paymentMethod, paidAmount, discount = 0, taxRate, notes } =
+      const { storeId: bodyStoreId, customerId, userId, items, paymentMethod, paidAmount, discount = 0, taxRate, notes } =
         request.body
+      const effectiveStoreId = bodyStoreId ?? ctx.storeId ?? null
+      const isStoreAdmin = ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
+      if (!isStoreAdmin && effectiveStoreId == null) {
+        reply.code(400).send({
+          success: false,
+          error: 'Envía storeId en el body o el header X-Store-Id con el id del local de venta para registrar la venta',
+        })
+        return
+      }
+      if (!isStoreAdmin && ctx.storeId != null && effectiveStoreId !== ctx.storeId) {
+        reply.code(403).send({
+          success: false,
+          error: 'Solo puedes registrar ventas en tu local de venta asignado',
+        })
+        return
+      }
+      if (effectiveStoreId) {
+        const storeCheck = await sqlQuery<{ id: string }>(sql`
+          SELECT id FROM stores WHERE id = ${effectiveStoreId} AND "companyId" = ${ctx.companyId} LIMIT 1
+        `)
+        if (storeCheck.length === 0) {
+          reply.code(400).send({ success: false, error: 'Local de venta no encontrado o no pertenece a la empresa' })
+          return
+        }
+      }
 
       // Validate all products exist and have enough stock (same company)
       for (const item of items) {
@@ -469,15 +522,15 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       // Create sale in transaction
       const sale = await sqlQuery<any>(sql`
         INSERT INTO sales (
-          "companyId", "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
+          "companyId", "storeId", "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
           status, "paymentMethod", notes
         )
         VALUES (
-          ${ctx.companyId}, ${customerId ?? null}, ${userId}, ${invoiceNumber}, ${total}, ${subtotal}, ${tax}, ${discount ?? null},
+          ${ctx.companyId}, ${effectiveStoreId}, ${customerId ?? null}, ${userId}, ${invoiceNumber}, ${total}, ${subtotal}, ${tax}, ${discount ?? null},
           'COMPLETED', ${paymentMethod}, ${notes ?? null}
         )
         RETURNING 
-          id, "companyId", "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
+          id, "companyId", "storeId", "customerId", "userId", "invoiceNumber", total, subtotal, tax, discount,
           status, "paymentMethod", notes, "createdAt", "updatedAt"
       `)
 
@@ -500,6 +553,7 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
         SELECT 
           s.id,
           s."companyId",
+          s."storeId",
           s."customerId",
           s."userId",
           s."invoiceNumber",

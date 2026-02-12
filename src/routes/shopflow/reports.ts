@@ -1,11 +1,34 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { getShopflowContext, type ShopflowContext } from './auth-helper.js'
+
+/** Resolve effective storeId for reports: USER = from context/fallback store, OWNER/ADMIN = from query or all. Returns null if USER without any store (caller should 403). */
+async function resolveEffectiveStoreIdForReport(
+  ctx: ShopflowContext,
+  queryStoreId?: string
+): Promise<string | null | undefined> {
+  const isStoreAdmin = ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN' || ctx.isSuperuser
+  if (isStoreAdmin) return queryStoreId ?? undefined
+  const fromCtx = ctx.storeId ?? queryStoreId
+  if (fromCtx) return fromCtx
+
+  const rows = (await sqlQuery(sql`
+    SELECT s.id
+    FROM stores s
+    INNER JOIN user_stores us ON us."storeId" = s.id AND us."userId" = ${ctx.userId}
+    WHERE s."companyId" = ${ctx.companyId} AND s.active = true
+    ORDER BY s."createdAt" ASC
+    LIMIT 1
+  `)) as Array<{ id: string }>
+
+  return rows.length > 0 ? rows[0].id : null
+}
 
 export async function shopflowReportsRoutes(fastify: FastifyInstance) {
-  // GET /api/shopflow/reports/stats - Sales statistics with date filters
+  // GET /api/shopflow/reports/stats - Sales statistics with date filters (store-scoped for USER)
   fastify.get<{
     Querystring: {
+      storeId?: string
       startDate?: string
       endDate?: string
     }
@@ -13,6 +36,14 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const { startDate, endDate } = request.query
 
       let query = sql`
@@ -24,6 +55,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         FROM sales
         WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
       `
+      if (effectiveStoreId !== undefined) {
+        query = sql`${query} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
 
       if (startDate) {
         query = sql`${query} AND "createdAt" >= ${new Date(startDate)}`
@@ -70,21 +104,30 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/daily - Daily sales data
+  // GET /api/shopflow/reports/daily - Daily sales data (store-scoped for USER)
   fastify.get<{
     Querystring: {
+      storeId?: string
       days?: string
     }
   }>('/api/shopflow/reports/daily', async (request, reply) => {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const days = parseInt(request.query.days || '30')
       const startDate = new Date()
       startDate.setDate(startDate.getDate() - (days - 1))
       startDate.setHours(0, 0, 0, 0)
 
-      const sales = (await sqlQuery(sql`
+      let dailyQuery = sql`
         SELECT 
           DATE("createdAt") as date,
           COUNT(*) as sales,
@@ -92,9 +135,15 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         FROM sales
         WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${startDate}
+      `
+      if (effectiveStoreId !== undefined) {
+        dailyQuery = sql`${dailyQuery} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
+      dailyQuery = sql`${dailyQuery}
         GROUP BY DATE("createdAt")
         ORDER BY date ASC
-      `)) as Array<{ date: Date; sales: string; revenue: string }>
+      `
+      const sales = (await sqlQuery(dailyQuery)) as Array<{ date: Date; sales: string; revenue: string }>
 
       // Create a map for quick lookup
       const salesMap = new Map<string, { sales: number; revenue: number }>()
@@ -136,9 +185,10 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/top-products - Top selling products
+  // GET /api/shopflow/reports/top-products - Top selling products (store-scoped for USER)
   fastify.get<{
     Querystring: {
+      storeId?: string
       limit?: string
       startDate?: string
       endDate?: string
@@ -148,6 +198,14 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const limit = parseInt(request.query.limit || '10')
       const { startDate, endDate, categoryId } = request.query
 
@@ -163,6 +221,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         INNER JOIN sales s ON si."saleId" = s.id AND s."companyId" = ${ctx.companyId}
         WHERE s.status = 'COMPLETED'
       `
+      if (effectiveStoreId !== undefined) {
+        query = sql`${query} AND s."storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
 
       if (startDate) {
         query = sql`${query} AND s."createdAt" >= ${new Date(startDate)}`
@@ -215,9 +276,10 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/payment-methods - Payment method statistics
+  // GET /api/shopflow/reports/payment-methods - Payment method statistics (store-scoped for USER)
   fastify.get<{
     Querystring: {
+      storeId?: string
       startDate?: string
       endDate?: string
     }
@@ -225,6 +287,14 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const { startDate, endDate } = request.query
 
       let query = sql`
@@ -235,6 +305,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         FROM sales
         WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
       `
+      if (effectiveStoreId !== undefined) {
+        query = sql`${query} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
 
       if (startDate) {
         query = sql`${query} AND "createdAt" >= ${new Date(startDate)}`
@@ -277,12 +350,22 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/inventory - Inventory statistics
-  fastify.get('/api/shopflow/reports/inventory', async (request, reply) => {
+  // GET /api/shopflow/reports/inventory - Inventory statistics (store-scoped for USER via product.storeId)
+  fastify.get<{
+    Querystring: { storeId?: string }
+  }>('/api/shopflow/reports/inventory', async (request, reply) => {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
-      const products = (await sqlQuery(sql`
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
+      let productsQuery = sql`
         SELECT 
           id,
           name,
@@ -292,9 +375,12 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           "minStock"
         FROM products
         WHERE "companyId" = ${ctx.companyId} AND active = true
-        ORDER BY stock ASC
-        LIMIT 10
-      `)) as Array<{
+      `
+      if (effectiveStoreId !== undefined) {
+        productsQuery = sql`${productsQuery} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
+      productsQuery = sql`${productsQuery} ORDER BY stock ASC LIMIT 10`
+      const products = (await sqlQuery(productsQuery)) as Array<{
         id: string
         name: string
         stock: number
@@ -303,7 +389,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         minStock: number | null
       }>
 
-      const statsResult = await sqlQuery(sql`
+      let statsQuery = sql`
         SELECT 
           COUNT(*) as "totalProducts",
           COUNT(CASE WHEN stock <= COALESCE("minStock", 0) THEN 1 END) as "lowStockProducts",
@@ -312,7 +398,11 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
           COALESCE(SUM(stock * price), 0) as "totalRetailValue"
         FROM products
         WHERE "companyId" = ${ctx.companyId} AND active = true
-      `)
+      `
+      if (effectiveStoreId !== undefined) {
+        statsQuery = sql`${statsQuery} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
+      const statsResult = await sqlQuery(statsQuery)
       const stats = statsResult[0] as {
         totalProducts: string
         lowStockProducts: string
@@ -351,17 +441,27 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/today - Today's statistics
-  fastify.get('/api/shopflow/reports/today', async (request, reply) => {
+  // GET /api/shopflow/reports/today - Today's statistics (store-scoped for USER)
+  fastify.get<{
+    Querystring: { storeId?: string }
+  }>('/api/shopflow/reports/today', async (request, reply) => {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const endOfDay = new Date(today)
       endOfDay.setHours(23, 59, 59, 999)
 
-      const result = (await sqlQuery(sql`
+      let todayQuery = sql`
         SELECT 
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue",
@@ -371,7 +471,11 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${today}
           AND "createdAt" <= ${endOfDay}
-      `)) as Array<{
+      `
+      if (effectiveStoreId !== undefined) {
+        todayQuery = sql`${todayQuery} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
+      const result = (await sqlQuery(todayQuery)) as Array<{
         salesCount: string
         totalRevenue: string
         totalTax: string
@@ -408,11 +512,19 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/week - This week's statistics
-  fastify.get('/api/shopflow/reports/week', async (request, reply) => {
+  // GET /api/shopflow/reports/week - This week's statistics (store-scoped for USER)
+  fastify.get<{ Querystring: { storeId?: string } }>('/api/shopflow/reports/week', async (request, reply) => {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const today = new Date()
       const dayOfWeek = today.getDay()
       const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1) // Monday
@@ -422,7 +534,7 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       endOfWeek.setDate(endOfWeek.getDate() + 6)
       endOfWeek.setHours(23, 59, 59, 999)
 
-      const result = (await sqlQuery(sql`
+      let weekQuery = sql`
         SELECT 
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue",
@@ -432,7 +544,11 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${startOfWeek}
           AND "createdAt" <= ${endOfWeek}
-      `)) as Array<{
+      `
+      if (effectiveStoreId !== undefined) {
+        weekQuery = sql`${weekQuery} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
+      const result = (await sqlQuery(weekQuery)) as Array<{
         salesCount: string
         totalRevenue: string
         totalTax: string
@@ -469,18 +585,26 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/shopflow/reports/month - This month's statistics
-  fastify.get('/api/shopflow/reports/month', async (request, reply) => {
+  // GET /api/shopflow/reports/month - This month's statistics (store-scoped for USER)
+  fastify.get<{ Querystring: { storeId?: string } }>('/api/shopflow/reports/month', async (request, reply) => {
     try {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
+      const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
+      if (effectiveStoreId === null) {
+        reply.code(403).send({
+          success: false,
+          error: 'Envía el parámetro storeId (query) o el header X-Store-Id con el id del local de venta para ver reportes (usuario no administrador)',
+        })
+        return
+      }
       const today = new Date()
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
       startOfMonth.setHours(0, 0, 0, 0)
       const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
       endOfMonth.setHours(23, 59, 59, 999)
 
-      const result = (await sqlQuery(sql`
+      let monthQuery = sql`
         SELECT 
           COUNT(*) as "salesCount",
           COALESCE(SUM(total), 0) as "totalRevenue",
@@ -490,7 +614,11 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
         WHERE "companyId" = ${ctx.companyId} AND status = 'COMPLETED'
           AND "createdAt" >= ${startOfMonth}
           AND "createdAt" <= ${endOfMonth}
-      `)) as Array<{
+      `
+      if (effectiveStoreId !== undefined) {
+        monthQuery = sql`${monthQuery} AND "storeId" IS NOT DISTINCT FROM ${effectiveStoreId}`
+      }
+      const result = (await sqlQuery(monthQuery)) as Array<{
         salesCount: string
         totalRevenue: string
         totalTax: string

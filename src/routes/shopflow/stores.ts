@@ -17,6 +17,7 @@ export type Store = {
 
 export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/stores - List stores
+  // OWNER, ADMIN, superuser: all company stores. USER: only stores in user_stores.
   fastify.get<{ Querystring: { includeInactive?: string } }>(
     '/api/shopflow/stores',
     async (request, reply) => {
@@ -25,17 +26,36 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
         if (!ctx) return
         const { includeInactive } = request.query
 
-        let query = sql`
-          SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
-          FROM stores
-          WHERE "companyId" = ${ctx.companyId}
-        `
-        if (includeInactive !== 'true') {
-          query = sql`${query} AND active = true`
-        }
-        query = sql`${query} ORDER BY name ASC`
+        const hasFullStoreAccess =
+          ctx.isSuperuser || ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
 
-        const stores = await sqlQuery<any>(query)
+        let stores: any[]
+        if (hasFullStoreAccess) {
+          let query = sql`
+            SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+            FROM stores
+            WHERE "companyId" = ${ctx.companyId}
+          `
+          if (includeInactive !== 'true') {
+            query = sql`${query} AND active = true`
+          }
+          query = sql`${query} ORDER BY name ASC`
+          stores = await sqlQuery<any>(query)
+        } else {
+          // USER: only stores assigned in user_stores
+          let query = sql`
+            SELECT s.id, s."companyId", s.name, s.code, s.address, s.phone, s.email, s."taxId", s.active, s."createdAt", s."updatedAt"
+            FROM stores s
+            INNER JOIN user_stores us ON us."storeId" = s.id AND us."userId" = ${ctx.userId}
+            WHERE s."companyId" = ${ctx.companyId}
+          `
+          if (includeInactive !== 'true') {
+            query = sql`${query} AND s.active = true`
+          }
+          query = sql`${query} ORDER BY s.name ASC`
+          stores = await sqlQuery<any>(query)
+        }
+
         return { success: true, data: stores }
       } catch (error) {
         fastify.log.error(error)
@@ -58,12 +78,22 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
         const ctx = await getShopflowContext(request, reply)
         if (!ctx) return
         const { code } = request.params
-        const rows = await sqlQuery<any>(sql`
-          SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
-          FROM stores
-          WHERE "companyId" = ${ctx.companyId} AND code = ${decodeURIComponent(code)}
-          LIMIT 1
-        `)
+        const hasFullStoreAccess =
+          ctx.isSuperuser || ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
+        const rows = hasFullStoreAccess
+          ? await sqlQuery<any>(sql`
+              SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+              FROM stores
+              WHERE "companyId" = ${ctx.companyId} AND code = ${decodeURIComponent(code)}
+              LIMIT 1
+            `)
+          : await sqlQuery<any>(sql`
+              SELECT s.id, s."companyId", s.name, s.code, s.address, s.phone, s.email, s."taxId", s.active, s."createdAt", s."updatedAt"
+              FROM stores s
+              INNER JOIN user_stores us ON us."storeId" = s.id AND us."userId" = ${ctx.userId}
+              WHERE s."companyId" = ${ctx.companyId} AND s.code = ${decodeURIComponent(code)}
+              LIMIT 1
+            `)
         if (rows.length === 0) {
           reply.code(404)
           return { success: false, error: 'Tienda no encontrada' }
@@ -88,12 +118,22 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
       const ctx = await getShopflowContext(request, reply)
       if (!ctx) return
       const { id } = request.params
-      const rows = await sqlQuery<any>(sql`
-        SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
-        FROM stores
-        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
-        LIMIT 1
-      `)
+      const hasFullStoreAccess =
+        ctx.isSuperuser || ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
+      const rows = hasFullStoreAccess
+        ? await sqlQuery<any>(sql`
+            SELECT id, "companyId", name, code, address, phone, email, "taxId", active, "createdAt", "updatedAt"
+            FROM stores
+            WHERE id = ${id} AND "companyId" = ${ctx.companyId}
+            LIMIT 1
+          `)
+        : await sqlQuery<any>(sql`
+            SELECT s.id, s."companyId", s.name, s.code, s.address, s.phone, s.email, s."taxId", s.active, s."createdAt", s."updatedAt"
+            FROM stores s
+            INNER JOIN user_stores us ON us."storeId" = s.id AND us."userId" = ${ctx.userId}
+            WHERE s.id = ${id} AND s."companyId" = ${ctx.companyId}
+            LIMIT 1
+          `)
       if (rows.length === 0) {
         reply.code(404)
         return { success: false, error: 'Tienda no encontrada' }
