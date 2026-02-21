@@ -3,6 +3,7 @@ import { healthRoutes } from './health.js'
 import { usersRoutes } from './users.js'
 import { authRoutes } from './auth.js'
 import { companyMembersRoutes } from './company-members.js'
+import { companiesRoutes } from './companies.js'
 import { shopflowCustomersRoutes } from './shopflow/customers.js'
 import { shopflowCategoriesRoutes } from './shopflow/categories.js'
 import { shopflowSuppliersRoutes } from './shopflow/suppliers.js'
@@ -96,6 +97,7 @@ export async function registerRoutes(fastify: FastifyInstance) {
   await fastify.register(usersRoutes)
   await fastify.register(authRoutes)
   await fastify.register(companyMembersRoutes)
+  await fastify.register(companiesRoutes)
   await fastify.register(shopflowCustomersRoutes)
   await fastify.register(shopflowCategoriesRoutes)
   await fastify.register(shopflowSuppliersRoutes)
