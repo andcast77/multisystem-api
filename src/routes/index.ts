@@ -20,6 +20,7 @@ import { shopflowExportRoutes } from './shopflow/export.js'
 import { shopflowInventoryTransfersRoutes } from './shopflow/inventory-transfers.js'
 import { shopflowPushSubscriptionsRoutes } from './shopflow/push-subscriptions.js'
 import { workifyRoutes } from './workify/index.js'
+import { techServicesRoutes } from './techservices/index.js'
 
 export async function registerRoutes(fastify: FastifyInstance) {
   // Ruta raíz - información de la API
@@ -80,6 +81,13 @@ export async function registerRoutes(fastify: FastifyInstance) {
         workify: {
           me: 'GET /api/workify/me',
         },
+        techservices: {
+          me: 'GET /api/techservices/me',
+          assets: 'GET/POST/PUT/DELETE /api/techservices/assets*',
+          workOrders: 'GET/POST/PUT /api/techservices/work-orders*',
+          parts: 'GET/POST/PUT/DELETE /api/techservices/parts*',
+          visits: 'GET/POST/PUT/DELETE /api/techservices/visits*',
+        },
       },
     }
   })
@@ -105,4 +113,5 @@ export async function registerRoutes(fastify: FastifyInstance) {
   await fastify.register(shopflowInventoryTransfersRoutes)
   await fastify.register(shopflowPushSubscriptionsRoutes)
   await fastify.register(workifyRoutes)
+  await fastify.register(techServicesRoutes)
 }

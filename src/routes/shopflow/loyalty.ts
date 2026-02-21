@@ -11,9 +11,9 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       const config = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
-          "minPurchaseForPoints", "maxPointsPerPurchase", active
+          "minPurchaseForPoints", "maxPointsPerPurchase", "isActive"
         FROM loyalty_configs
-        WHERE "companyId" = ${ctx.companyId} AND active = true
+        WHERE "companyId" = ${ctx.companyId} AND "isActive" = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -78,7 +78,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase"
         FROM loyalty_configs
-        WHERE "companyId" = ${ctx.companyId} AND active = true
+        WHERE "companyId" = ${ctx.companyId} AND "isActive" = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -95,7 +95,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       const newConfig = await sqlQuery(sql`
         INSERT INTO loyalty_configs (
           "companyId", "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
-          "minPurchaseForPoints", "maxPointsPerPurchase", active
+          "minPurchaseForPoints", "maxPointsPerPurchase", "isActive"
         )
         VALUES (
           ${ctx.companyId},
@@ -115,8 +115,8 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       if (newConfig.length > 0) {
         await sqlQuery(sql`
           UPDATE loyalty_configs
-          SET active = false
-          WHERE "companyId" = ${ctx.companyId} AND id != ${newConfig[0].id} AND active = true
+          SET "isActive" = false
+          WHERE "companyId" = ${ctx.companyId} AND id != ${newConfig[0].id} AND "isActive" = true
         `)
       }
 
@@ -256,7 +256,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         SELECT 
           "pointsPerDollar", "minPurchaseForPoints", "maxPointsPerPurchase", "pointsExpireMonths"
         FROM loyalty_configs
-        WHERE "companyId" = ${ctx.companyId} AND active = true
+        WHERE "companyId" = ${ctx.companyId} AND "isActive" = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)

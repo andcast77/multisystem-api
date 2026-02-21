@@ -64,12 +64,12 @@ export async function workifyMeRoutes(fastify: FastifyInstance) {
         roles = companyId ? [{ role: { name: decoded.membershipRole || 'USER' }, companyId }] : []
       }
 
-      let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean } | null = null
+      let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean } | null = null
       if (companyId) {
         const rows = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
           FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
-        `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+        `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
         company = rows[0] ?? null
       }
 

@@ -93,15 +93,15 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; membershipRole?: string }
+      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean; membershipRole?: string }
       let companies: CompanyRow[] = []
-      let selectedCompany: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean } | null = null
+      let selectedCompany: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean } | null = null
       let selectedMembershipRole: string | null = null
 
       // Superuser: get all companies; token may include companyId if bodyCompanyId provided
       if (user.isSuperuser) {
         const allCompanies = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
           FROM companies
           WHERE "isActive" = true
           ORDER BY name
@@ -114,7 +114,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         // Company members (company_members); fallback to user_roles
         try {
           const members = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", cm."membershipRole" as "membershipRole"
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled", cm."membershipRole" as "membershipRole"
             FROM company_members cm
             JOIN companies c ON c.id = cm."companyId"
             WHERE cm."userId" = ${user.id} AND c."isActive" = true
@@ -128,7 +128,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
         if (companies.length === 0) {
           const ur = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled"
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled"
             FROM user_roles ur
             JOIN companies c ON c.id = ur."companyId"
             WHERE ur."userId" = ${user.id}
@@ -143,7 +143,7 @@ export async function authRoutes(fastify: FastifyInstance) {
             selectedMembershipRole = row.membershipRole ?? null
           }
         } else if (companies.length === 1) {
-          selectedCompany = { id: companies[0].id, name: companies[0].name, workifyEnabled: companies[0].workifyEnabled, shopflowEnabled: companies[0].shopflowEnabled }
+          selectedCompany = { id: companies[0].id, name: companies[0].name, workifyEnabled: companies[0].workifyEnabled, shopflowEnabled: companies[0].shopflowEnabled, technicalServicesEnabled: companies[0].technicalServicesEnabled }
           selectedMembershipRole = companies[0].membershipRole ?? null
         }
       }
@@ -164,7 +164,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         user: { id: string; email: string; name: string; role: string; isSuperuser?: boolean }
         token: string
         companyId?: string
-        company?: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }
+        company?: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }
         companies?: CompanyRow[]
       } = {
         user: {
@@ -213,10 +213,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       companyName?: string
       workifyEnabled?: boolean
       shopflowEnabled?: boolean
+      technicalServicesEnabled?: boolean
     }
   }>('/api/auth/register', async (request, reply) => {
     try {
-      const { email, password, firstName = '', lastName = '', companyName, workifyEnabled = true, shopflowEnabled = false } = request.body
+      const { email, password, firstName = '', lastName = '', companyName, workifyEnabled = true, shopflowEnabled = false, technicalServicesEnabled = false } = request.body
 
       if (!email || !password) {
         reply.code(400)
@@ -251,8 +252,8 @@ export async function authRoutes(fastify: FastifyInstance) {
           const user = users[0]
 
           const companyRows = (await sql`
-            INSERT INTO companies (id, name, "ownerUserId", "workifyEnabled", "shopflowEnabled", "isActive", "createdAt", "updatedAt")
-            VALUES (gen_random_uuid(), ${companyName.trim()}, ${user.id}, ${workifyEnabled}, ${shopflowEnabled}, true, NOW(), NOW())
+            INSERT INTO companies (id, name, "ownerUserId", "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled", "isActive", "createdAt", "updatedAt")
+            VALUES (gen_random_uuid(), ${companyName.trim()}, ${user.id}, ${workifyEnabled}, ${shopflowEnabled}, ${technicalServicesEnabled}, true, NOW(), NOW())
             RETURNING id
           `) as Array<{ id: string }>
           if (companyRows.length === 0) throw new Error('Company insert failed')
@@ -300,7 +301,7 @@ export async function authRoutes(fastify: FastifyInstance) {
                 companyId,
               },
               token,
-              company: { id: companyId, name: companyName.trim(), workifyEnabled, shopflowEnabled },
+              company: { id: companyId, name: companyName.trim(), workifyEnabled, shopflowEnabled, technicalServicesEnabled },
             },
           }
         } catch (err) {
@@ -461,14 +462,14 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean } | null = null
+      let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean } | null = null
       let responseCompanyId: string | undefined = decoded.companyId
 
       if (decoded.companyId) {
         const rows = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
           FROM companies WHERE id = ${decoded.companyId} AND "isActive" = true LIMIT 1
-        `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+        `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
         company = rows[0] ?? null
       }
 
@@ -479,9 +480,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         if (effectiveId) {
           responseCompanyId = effectiveId
           const rows = (await sql`
-            SELECT id, name, "workifyEnabled", "shopflowEnabled"
+            SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
             FROM companies WHERE id = ${effectiveId} AND "isActive" = true LIMIT 1
-          `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+          `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
           company = rows[0] ?? null
         }
       }
@@ -588,12 +589,12 @@ export async function authRoutes(fastify: FastifyInstance) {
         return { success: false, error: 'Token inválido o expirado' }
       }
 
-      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; membershipRole?: string }
+      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean; membershipRole?: string }
       let companies: CompanyRow[] = []
 
       if (decoded.isSuperuser) {
         companies = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled"
+          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
           FROM companies
           WHERE "isActive" = true
           ORDER BY name
@@ -601,7 +602,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       } else {
         try {
           companies = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", cm."membershipRole" as "membershipRole"
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled", cm."membershipRole" as "membershipRole"
             FROM company_members cm
             JOIN companies c ON c.id = cm."companyId"
             WHERE cm."userId" = ${decoded.id} AND c."isActive" = true
@@ -609,7 +610,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           `) as CompanyRow[]
         } catch {
           const ur = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled"
+            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled"
             FROM user_roles ur
             JOIN companies c ON c.id = ur."companyId"
             WHERE ur."userId" = ${decoded.id} AND c."isActive" = true
@@ -696,9 +697,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       `
 
       const companyRows = (await sql`
-        SELECT id, name, "workifyEnabled", "shopflowEnabled"
+        SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
         FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
-      `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean }>
+      `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
 
       return {
         success: true,
