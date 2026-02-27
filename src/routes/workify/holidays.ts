@@ -1,12 +1,12 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyHolidaysRoutes(fastify: FastifyInstance) {
   // GET /api/workify/holidays - List holidays (company-scoped)
-  fastify.get('/api/workify/holidays', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get('/api/workify/holidays', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     try {
       const rows = (await sql`
@@ -25,9 +25,8 @@ export async function workifyHolidaysRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/workify/holidays/:id
-  fastify.get<{ Params: { id: string } }>('/api/workify/holidays/:id', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get<{ Params: { id: string } }>('/api/workify/holidays/:id', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     const { id } = request.params
     try {

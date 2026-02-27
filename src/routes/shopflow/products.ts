@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export type Product = {
   id: string
@@ -39,10 +40,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       sortBy?: string
       sortOrder?: string
     }
-  }>('/api/shopflow/products', async (request, reply) => {
+  }>('/api/shopflow/products', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const {
         search,
         categoryId,
@@ -192,10 +192,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/products/low-stock
   fastify.get<{
     Querystring: { minStockThreshold?: string }
-  }>('/api/shopflow/products/low-stock', async (request, reply) => {
+  }>('/api/shopflow/products/low-stock', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { minStockThreshold } = request.query
       const threshold = minStockThreshold != null ? parseInt(minStockThreshold) : undefined
 
@@ -228,10 +227,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/products/:id
-  fastify.get<{ Params: { id: string } }>('/api/shopflow/products/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/shopflow/products/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const rows = await sqlQuery<any>(sql`
         SELECT id, "companyId", name, description, sku, barcode, price, cost, stock, "minStock", "maxStock",
@@ -275,10 +273,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       active?: boolean
       imageUrl?: string | null
     }
-  }>('/api/shopflow/products', async (request, reply) => {
+  }>('/api/shopflow/products', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const body = request.body
       const id = crypto.randomUUID()
       const now = new Date()
@@ -346,10 +343,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
       active: boolean
       imageUrl: string | null
     }>
-  }>('/api/shopflow/products/:id', async (request, reply) => {
+  }>('/api/shopflow/products/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const body = request.body
 
@@ -424,10 +420,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
   fastify.put<{
     Params: { id: string }
     Body: { stock: number; minStock?: number }
-  }>('/api/shopflow/products/:id/inventory', async (request, reply) => {
+  }>('/api/shopflow/products/:id/inventory', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const { stock, minStock } = request.body
 
@@ -473,10 +468,9 @@ export async function shopflowProductsRoutes(fastify: FastifyInstance) {
   })
 
   // DELETE /api/shopflow/products/:id
-  fastify.delete<{ Params: { id: string } }>('/api/shopflow/products/:id', async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/api/shopflow/products/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       const existing = await sqlQuery<{ id: string }>(sql`

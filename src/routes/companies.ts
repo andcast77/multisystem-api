@@ -1,45 +1,20 @@
 import { FastifyInstance } from 'fastify'
 import { sql } from '../db/neon.js'
-import { verifyToken } from './auth.js'
+import { requireAuth } from '../lib/auth.js'
+import { canAccessCompany, isOwner, canManageCompany } from '../lib/permissions.js'
+import { sendForbidden, sendNotFound, sendServerError } from '../lib/errors.js'
 
 export async function companiesRoutes(fastify: FastifyInstance) {
-  const canAccessCompany = (decoded: { id: string; companyId?: string; isSuperuser?: boolean }, companyId: string) => {
-    if (decoded.isSuperuser) return true
-    if (decoded.companyId !== companyId) return false
-    return true
-  }
-
-  const isOwner = (decoded: { membershipRole?: string; isSuperuser?: boolean }) => {
-    if (decoded.isSuperuser) return true
-    return decoded.membershipRole === 'OWNER'
-  }
-
-  const canManageCompany = (decoded: { membershipRole?: string; isSuperuser?: boolean }) => {
-    if (decoded.isSuperuser) return true
-    return decoded.membershipRole === 'OWNER' || decoded.membershipRole === 'ADMIN'
-  }
-
   // GET /api/companies/:id - Get company details
   fastify.get<{
     Params: { id: string }
     Headers: { authorization?: string }
-  }>('/api/companies/:id', async (request, reply) => {
+  }>('/api/companies/:id', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { id: companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
-        reply.code(403)
-        return { success: false, error: 'No tienes acceso a esta empresa' }
+        return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
 
       type CompanyRow = {
@@ -75,8 +50,7 @@ export async function companiesRoutes(fastify: FastifyInstance) {
       `) as CompanyRow[]
 
       if (companies.length === 0) {
-        reply.code(404)
-        return { success: false, error: 'Empresa no encontrada' }
+        return sendNotFound(reply, 'Empresa no encontrada')
       }
 
       const company = companies[0]
@@ -109,9 +83,7 @@ export async function companiesRoutes(fastify: FastifyInstance) {
       reply.code(200)
       return { success: true, data }
     } catch (error) {
-      console.error('Error fetching company:', error)
-      reply.code(500)
-      return { success: false, error: 'Error al obtener la empresa' }
+      return sendServerError(reply, error, fastify.log, 'Error al obtener la empresa')
     }
   })
 
@@ -119,19 +91,9 @@ export async function companiesRoutes(fastify: FastifyInstance) {
   fastify.get<{
     Params: { id: string }
     Headers: { authorization?: string }
-  }>('/api/companies/:id/stats', async (request, reply) => {
+  }>('/api/companies/:id/stats', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { id: companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
         reply.code(403)
@@ -230,23 +192,12 @@ export async function companiesRoutes(fastify: FastifyInstance) {
       address?: string
       phone?: string
     }
-  }>('/api/companies/:id', async (request, reply) => {
+  }>('/api/companies/:id', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { id: companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
-        reply.code(403)
-        return { success: false, error: 'No tienes acceso a esta empresa' }
+        return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
 
       const {
@@ -345,19 +296,9 @@ export async function companiesRoutes(fastify: FastifyInstance) {
   fastify.delete<{
     Params: { id: string }
     Headers: { authorization?: string }
-  }>('/api/companies/:id', async (request, reply) => {
+  }>('/api/companies/:id', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { id: companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
         reply.code(403)

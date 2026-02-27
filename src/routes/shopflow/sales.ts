@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { sql, sqlQuery } from '../../db/neon.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export type Sale = {
   id: string
@@ -45,10 +46,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       page?: string
       limit?: string
     }
-  }>('/api/shopflow/sales', async (request, reply) => {
+  }>('/api/shopflow/sales', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const {
         storeId: queryStoreId,
         customerId,
@@ -250,10 +250,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/sales/:id - Get sale by ID (USER can only read if sale.storeId matches their store)
-  fastify.get<{ Params: { id: string } }>('/api/shopflow/sales/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/shopflow/sales/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       const sale = await sqlQuery<any>(sql`
@@ -382,10 +381,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
       taxRate?: number
       notes?: string | null
     }
-  }>('/api/shopflow/sales', async (request, reply) => {
+  }>('/api/shopflow/sales', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { storeId: bodyStoreId, customerId, userId, items, paymentMethod, paidAmount, discount = 0, taxRate, notes } =
         request.body
       const effectiveStoreId = bodyStoreId ?? ctx.storeId ?? null
@@ -621,10 +619,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
   })
 
   // POST /api/shopflow/sales/:id/cancel - Cancel sale
-  fastify.post<{ Params: { id: string } }>('/api/shopflow/sales/:id/cancel', async (request, reply) => {
+  fastify.post<{ Params: { id: string } }>('/api/shopflow/sales/:id/cancel', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       const sale = await sqlQuery<any>(sql`
@@ -720,10 +717,9 @@ export async function shopflowSalesRoutes(fastify: FastifyInstance) {
   })
 
   // POST /api/shopflow/sales/:id/refund - Refund sale
-  fastify.post<{ Params: { id: string } }>('/api/shopflow/sales/:id/refund', async (request, reply) => {
+  fastify.post<{ Params: { id: string } }>('/api/shopflow/sales/:id/refund', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       const sale = await sqlQuery<any>(sql`

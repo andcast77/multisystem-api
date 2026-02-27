@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
-import { sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 const ALLOWED_TABLES = [
   'users',
@@ -90,10 +91,9 @@ function buildExportQueryForPushSubs(companyId: string): { query: string; values
 
 export async function shopflowExportRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/export/json - Export company-scoped data as JSON
-  fastify.get('/api/shopflow/export/json', async (request, reply) => {
+  fastify.get('/api/shopflow/export/json', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
 
       const data: Record<string, unknown[]> = {}
 
@@ -140,10 +140,10 @@ export async function shopflowExportRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/export/csv?table=TABLE - Export one table as CSV (company-scoped)
   fastify.get<{ Querystring: { table: string } }>(
     '/api/shopflow/export/csv',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
 
         const { table } = request.query
         if (!table || typeof table !== 'string') {

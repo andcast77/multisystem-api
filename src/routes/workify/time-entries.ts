@@ -1,14 +1,15 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyTimeEntriesRoutes(fastify: FastifyInstance) {
   // GET /api/workify/time-entries - List time entries (company-scoped)
   fastify.get<{ Querystring: { employeeId?: string; start?: string; end?: string } }>(
     '/api/workify/time-entries',
+    { preHandler: [requireAuth, requireWorkifyContext] },
     async (request, reply) => {
-      const ctx = await getWorkifyContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { employeeId, start, end } = request.query
       try {

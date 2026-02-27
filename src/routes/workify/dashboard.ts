@@ -1,12 +1,12 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { sql } from '../../db/neon.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyDashboardRoutes(fastify: FastifyInstance) {
   // GET /api/workify/dashboard/stats - Dashboard stats (company-scoped)
-  fastify.get('/api/workify/dashboard/stats', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get('/api/workify/dashboard/stats', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     try {
       const employeeCount = (await sql`

@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export type StoreConfig = {
   id: string
@@ -21,10 +22,9 @@ export type StoreConfig = {
 
 export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/store-config - Get store configuration
-  fastify.get('/api/shopflow/store-config', async (request, reply) => {
+  fastify.get('/api/shopflow/store-config', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const config = await sqlQuery<any>(sql`
         SELECT 
           id, "companyId", name, address, phone, email, "taxId", currency, "taxRate", 
@@ -75,10 +75,9 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   })
 
   // PUT /api/shopflow/store-config - Update store configuration
-  fastify.put<{ Body: Partial<StoreConfig> }>('/api/shopflow/store-config', async (request, reply) => {
+  fastify.put<{ Body: Partial<StoreConfig> }>('/api/shopflow/store-config', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const {
         name,
         address,
@@ -211,10 +210,9 @@ export async function shopflowStoreConfigRoutes(fastify: FastifyInstance) {
   })
 
   // POST /api/shopflow/store-config/next-invoice-number - Get next invoice number
-  fastify.post('/api/shopflow/store-config/next-invoice-number', async (request, reply) => {
+  fastify.post('/api/shopflow/store-config/next-invoice-number', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const config = await sqlQuery<any>(sql`
         SELECT "invoicePrefix", "invoiceNumber"
         FROM store_configs

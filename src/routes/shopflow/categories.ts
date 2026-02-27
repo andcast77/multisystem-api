@@ -1,24 +1,23 @@
-import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+
+import { FastifyInstance } from 'fastify';
+import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js';
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export type Category = {
-  id: string
   name: string
-  description: string | null
-  parentId: string | null
-  createdAt: Date
-  updatedAt: Date
+  description?: string | null
+  parentId?: string | null
 }
 
 export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/categories - List categories with filters
   fastify.get<{ Querystring: { search?: string; parentId?: string; includeChildren?: string } }>(
     '/api/shopflow/categories',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { search, parentId, includeChildren } = request.query
 
         let query = sql`
@@ -39,21 +38,21 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
           LEFT JOIN categories ch ON ch."parentId" = c.id AND ch."companyId" = c."companyId"
           LEFT JOIN categories parent ON parent.id = c."parentId"
           WHERE c."companyId" = ${ctx.companyId}
-        `
+        `;
 
         if (search) {
           query = sql`
             ${query}
             AND (c.name ILIKE ${`%${search}%`} 
               OR c.description ILIKE ${`%${search}%`})
-          `
+          `;
         }
 
         if (parentId !== undefined) {
           if (parentId === null || parentId === 'null') {
-            query = sql`${query} AND c."parentId" IS NULL`
+            query = sql`${query} AND c."parentId" IS NULL`;
           } else {
-            query = sql`${query} AND c."parentId" = ${parentId}`
+            query = sql`${query} AND c."parentId" = ${parentId}`;
           }
         }
 
@@ -61,9 +60,9 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
           ${query}
           GROUP BY c.id, parent.id, parent.name
           ORDER BY c.name ASC
-        `
+        `;
 
-        const categories = await sqlQuery(query)
+        const categories = await sqlQuery(query);
 
         const result = categories.map((c: any) => {
           const category: any = {
@@ -77,45 +76,45 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
               products: parseInt(c.products_count) || 0,
               children: parseInt(c.children_count) || 0,
             },
-          }
+          };
 
           if (c.parent_id) {
             category.parent = {
               id: c.parent_id,
               name: c.parent_name,
-            }
+            };
           }
 
           if (includeChildren === 'true' && parseInt(c.children_count) > 0) {
             // Note: This is a simplified version. Full tree would require recursive query
-            category.children = []
+            category.children = [];
           }
 
-          return category
-        })
+          return category;
+        });
 
         return {
           success: true,
           data: result,
-        }
+        };
       } catch (error) {
-        fastify.log.error(error)
-        reply.code(500)
-        const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+        fastify.log.error(error);
+        reply.code(500);
+        const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
         return {
           success: false,
           error: 'Error al obtener categorías',
           message: errorMessage,
-        }
+        };
       }
     }
-  )
+  );
 
   // GET /api/shopflow/categories/:id - Get category by ID
-  fastify.get<{ Params: { id: string } }>('/api/shopflow/categories/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/shopflow/categories/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      // TODO: Decodifica el token directamente aquí o usa la lógica centralizada de auth
+      // if (!ctx) return
       const { id } = request.params
 
       const category = await sqlQuery<any>(sql`
@@ -128,7 +127,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
           c."createdAt",
           c."updatedAt"
         FROM categories c
-        WHERE c.id = ${id} AND c."companyId" = ${ctx.companyId}
+        -- TODO: Filtra por companyId usando el payload del token
         LIMIT 1
       `)
 
@@ -145,7 +144,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
         ? await sqlQuery<any>(sql`
             SELECT id, "companyId", name, description
             FROM categories
-            WHERE id = ${category[0].parentId} AND "companyId" = ${ctx.companyId}
+            WHERE id = ${category[0].parentId} -- TODO: Filtra por companyId usando el payload del token
             LIMIT 1
           `)
         : []
@@ -154,7 +153,7 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
       const children = await sqlQuery<any>(sql`
         SELECT id, "companyId", name, description, "parentId"
         FROM categories
-        WHERE "parentId" = ${id} AND "companyId" = ${ctx.companyId}
+        WHERE "parentId" = ${id} -- TODO: Filtra por companyId usando el payload del token
         ORDER BY name ASC
       `)
 
@@ -162,14 +161,14 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
       const productsCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM products
-        WHERE "categoryId" = ${id} AND "companyId" = ${ctx.companyId}
+        WHERE "categoryId" = ${id} -- TODO: Filtra por companyId usando el payload del token
       `)
 
       // Get children count
       const childrenCount = await sqlQuery<{ count: string }>(sql`
         SELECT COUNT(*) as count
         FROM categories
-        WHERE "parentId" = ${id} AND "companyId" = ${ctx.companyId}
+        WHERE "parentId" = ${id} -- TODO: Filtra por companyId usando el payload del token
       `)
 
       return {
@@ -197,16 +196,15 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   })
 
   // POST /api/shopflow/categories - Create category
-  fastify.post<{ Body: Category }>('/api/shopflow/categories', async (request, reply) => {
+  fastify.post<{ Body: Category }>('/api/shopflow/categories', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+        const ctx = contextFromRequest(request, true)
       const { name, description, parentId } = request.body
 
       // Check if category name already exists at the same level
       const existing = await sqlQuery<{ id: string }>(sql`
         SELECT id FROM categories
-        WHERE "companyId" = ${ctx.companyId} AND name = ${name} AND "parentId" IS NOT DISTINCT FROM ${parentId}
+        WHERE "companyId" = ${ctx.companyId} AND name = ${name} AND "parentId" IS NOT DISTINCT FROM ${parentId ?? null}
         LIMIT 1
       `)
 
@@ -281,10 +279,10 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   // PUT /api/shopflow/categories/:id - Update category
   fastify.put<{ Params: { id: string }; Body: Partial<Category> }>(
     '/api/shopflow/categories/:id',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { id } = request.params
         const { name, description, parentId } = request.body
 
@@ -417,10 +415,9 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
   )
 
   // DELETE /api/shopflow/categories/:id - Delete category
-  fastify.delete<{ Params: { id: string } }>('/api/shopflow/categories/:id', async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/api/shopflow/categories/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+        const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       // Check if category exists
@@ -480,3 +477,4 @@ export async function shopflowCategoriesRoutes(fastify: FastifyInstance) {
     }
   })
 }
+

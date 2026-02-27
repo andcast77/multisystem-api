@@ -1,42 +1,22 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../db/neon.js'
 import { userDisplayName } from '../db/neon.js'
-import { verifyToken } from './auth.js'
+import { requireAuth } from '../lib/auth.js'
+import { canAccessCompany, canManageMembers } from '../lib/permissions.js'
+import { sendForbidden, sendServerError } from '../lib/errors.js'
 import bcrypt from 'bcryptjs'
 
 export async function companyMembersRoutes(fastify: FastifyInstance) {
-  const canAccessCompany = (decoded: { id: string; companyId?: string; isSuperuser?: boolean; membershipRole?: string }, companyId: string) => {
-    if (decoded.isSuperuser) return true
-    if (decoded.companyId !== companyId) return false
-    return true
-  }
-
-  const canManageMembers = (decoded: { membershipRole?: string; isSuperuser?: boolean }) => {
-    if (decoded.isSuperuser) return true
-    return decoded.membershipRole === 'OWNER' || decoded.membershipRole === 'ADMIN'
-  }
-
   // GET /api/companies/:companyId/members - List company members (same list for Workify and Shopflow)
   fastify.get<{
     Params: { companyId: string }
     Headers: { authorization?: string }
-  }>('/api/companies/:companyId/members', async (request, reply) => {
+  }>('/api/companies/:companyId/members', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
-        reply.code(403)
-        return { success: false, error: 'No tienes acceso a esta empresa' }
+        return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
 
       type MemberRow = {
@@ -109,9 +89,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
 
       return { success: true, data }
     } catch (error) {
-      fastify.log.error(error)
-      reply.code(500)
-      return { success: false, error: error instanceof Error ? error.message : 'Error' }
+      return sendServerError(reply, error, fastify.log)
     }
   })
 
@@ -127,27 +105,15 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
       membershipRole: 'ADMIN' | 'USER'
       storeIds?: string[]
     }
-  }>('/api/companies/:companyId/members', async (request, reply) => {
+  }>('/api/companies/:companyId/members', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
-        reply.code(403)
-        return { success: false, error: 'No tienes acceso a esta empresa' }
+        return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
       if (!canManageMembers(decoded)) {
-        reply.code(403)
-        return { success: false, error: 'Solo el owner o un admin pueden crear usuarios' }
+        return sendForbidden(reply, 'Solo el owner o un admin pueden crear usuarios')
       }
 
       const { email, password, firstName = '', lastName = '', membershipRole, storeIds } = request.body
@@ -240,29 +206,17 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
     Params: { companyId: string; userId: string }
     Headers: { authorization?: string }
     Body: { storeIds: string[] }
-  }>('/api/companies/:companyId/members/:userId/stores', async (request, reply) => {
+  }>('/api/companies/:companyId/members/:userId/stores', { preHandler: [requireAuth] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-      const decoded = verifyToken(authHeader.substring(7))
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const { companyId, userId } = request.params
       const { storeIds } = request.body
 
       if (!canAccessCompany(decoded, companyId)) {
-        reply.code(403)
-        return { success: false, error: 'No tienes acceso a esta empresa' }
+        return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
       if (!canManageMembers(decoded)) {
-        reply.code(403)
-        return { success: false, error: 'Solo el owner o un admin pueden modificar locales de usuarios' }
+        return sendForbidden(reply, 'Solo el owner o un admin pueden modificar locales de usuarios')
       }
 
       const member = await sqlQuery<{ membershipRole: string }>(sql`

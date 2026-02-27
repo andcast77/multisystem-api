@@ -1,15 +1,16 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/ticket-config - Get ticket configuration
   fastify.get<{ Querystring: { storeId?: string } }>(
     '/api/shopflow/ticket-config',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { storeId } = request.query
 
         let config = await sqlQuery<any>(sql`
@@ -77,10 +78,9 @@ export async function shopflowTicketConfigRoutes(fastify: FastifyInstance) {
       copies?: number
       autoPrint?: boolean
     }
-  }>('/api/shopflow/ticket-config', async (request, reply) => {
+  }>('/api/shopflow/ticket-config', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { storeId } = request.query
       const body = request.body
 

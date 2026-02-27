@@ -7,7 +7,7 @@ import { workifyHolidaysRoutes } from './holidays.js'
 import { workifyWorkShiftsRoutes } from './work-shifts.js'
 import { workifyTimeEntriesRoutes } from './time-entries.js'
 import { workifyDashboardRoutes } from './dashboard.js'
-import { workifyAttendanceRoutes } from './attendance.js'
+// import { workifyAttendanceRoutes } from './attendance.js'
 import { workifySpecialAssignmentsRoutes } from './special-assignments.js'
 
 export async function workifyRoutes(fastify: FastifyInstance) {
@@ -19,6 +19,6 @@ export async function workifyRoutes(fastify: FastifyInstance) {
   await fastify.register(workifyWorkShiftsRoutes)
   await fastify.register(workifyTimeEntriesRoutes)
   await fastify.register(workifyDashboardRoutes)
-  await fastify.register(workifyAttendanceRoutes)
+  // await fastify.register(workifyAttendanceRoutes)
   await fastify.register(workifySpecialAssignmentsRoutes)
 }

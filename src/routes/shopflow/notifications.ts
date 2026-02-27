@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/notifications - Create notification
@@ -15,10 +16,9 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       actionUrl?: string
       expiresAt?: string
     }
-  }>('/api/shopflow/notifications', async (request, reply) => {
+  }>('/api/shopflow/notifications', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { userId, type, priority, title, message, data, actionUrl, expiresAt } = request.body
 
       if (!userId || !type || !title || !message) {
@@ -102,10 +102,9 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
       page?: string
       limit?: string
     }
-  }>('/api/shopflow/notifications', async (request, reply) => {
+  }>('/api/shopflow/notifications', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const {
         userId,
         type,
@@ -219,10 +218,9 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     Body: {
       userId: string
     }
-  }>('/api/shopflow/notifications/:id/read', async (request, reply) => {
+  }>('/api/shopflow/notifications/:id/read', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const { userId } = request.body
 
@@ -286,10 +284,9 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     Body: {
       userId: string
     }
-  }>('/api/shopflow/notifications/:id/unread', async (request, reply) => {
+  }>('/api/shopflow/notifications/:id/unread', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const { userId } = request.body
 
@@ -352,8 +349,9 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     Body: {
       userId: string
     }
-  }>('/api/shopflow/notifications/read-all', async (request, reply) => {
+  }>('/api/shopflow/notifications/read-all', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
+      const ctx = contextFromRequest(request, true)
       const { userId } = request.body
 
       if (!userId) {
@@ -394,7 +392,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     Body: {
       userId: string
     }
-  }>('/api/shopflow/notifications/:id', async (request, reply) => {
+  }>('/api/shopflow/notifications/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
       const { id } = request.params
       const { userId } = request.body
@@ -454,7 +452,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
     Querystring: {
       userId: string
     }
-  }>('/api/shopflow/notifications/unread-count', async (request, reply) => {
+  }>('/api/shopflow/notifications/unread-count', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
       const { userId } = request.query
 
@@ -495,7 +493,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/notifications/preferences/:userId - Get user notification preferences
   fastify.get<{
     Params: { userId: string }
-  }>('/api/shopflow/notifications/preferences/:userId', async (request, reply) => {
+  }>('/api/shopflow/notifications/preferences/:userId', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
       const { userId } = request.params
 
@@ -547,7 +545,7 @@ export async function shopflowNotificationsRoutes(fastify: FastifyInstance) {
   // Alias: GET /api/shopflow/users/:userId/notification-preferences (frontend expects this path)
   fastify.get<{
     Params: { userId: string }
-  }>('/api/shopflow/users/:userId/notification-preferences', async (request, reply) => {
+  }>('/api/shopflow/users/:userId/notification-preferences', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
       const { userId } = request.params
 

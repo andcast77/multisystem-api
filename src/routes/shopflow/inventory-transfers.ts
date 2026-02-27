@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 const TRANSFER_STATUSES = ['PENDING', 'IN_TRANSIT', 'COMPLETED', 'CANCELLED'] as const
 
@@ -15,10 +16,9 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
       page?: string
       limit?: string
     }
-  }>('/api/shopflow/inventory-transfers', async (request, reply) => {
+  }>('/api/shopflow/inventory-transfers', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { fromStoreId, toStoreId, productId, status, page = '1', limit = '20' } = request.query
       const pageNum = parseInt(page)
       const limitNum = Math.min(parseInt(limit) || 20, 100)
@@ -88,10 +88,9 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
       notes?: string | null
       createdById: string
     }
-  }>('/api/shopflow/inventory-transfers', async (request, reply) => {
+  }>('/api/shopflow/inventory-transfers', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { fromStoreId, toStoreId, productId, quantity, notes, createdById } = request.body
 
       if (fromStoreId === toStoreId) {
@@ -136,10 +135,10 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
   // POST /api/shopflow/inventory-transfers/:id/complete
   fastify.post<{ Params: { id: string } }>(
     '/api/shopflow/inventory-transfers/:id/complete',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { id } = request.params
 
         const existing = await sqlQuery<any>(sql`
@@ -196,10 +195,10 @@ export async function shopflowInventoryTransfersRoutes(fastify: FastifyInstance)
   // POST /api/shopflow/inventory-transfers/:id/cancel
   fastify.post<{ Params: { id: string } }>(
     '/api/shopflow/inventory-transfers/:id/cancel',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { id } = request.params
 
         const existing = await sqlQuery<any>(sql`

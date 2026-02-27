@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getTechServicesContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireTechServicesContext } from './auth-helper.js'
 
 type WorkOrderInput = {
   title?: string
@@ -26,9 +27,8 @@ export async function techServicesWorkOrdersRoutes(fastify: FastifyInstance) {
       assignedEmployeeId?: string
       assetId?: string
     }
-  }>('/api/techservices/work-orders', async (request, reply) => {
-    const ctx = await getTechServicesContext(request, reply)
-    if (!ctx) return
+  }>('/api/techservices/work-orders', { preHandler: [requireAuth, requireTechServicesContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     const { page = '1', limit = '20', search, status, priority, assignedEmployeeId, assetId } = request.query
     const pageNum = Math.max(1, parseInt(page, 10))
@@ -118,9 +118,9 @@ export async function techServicesWorkOrdersRoutes(fastify: FastifyInstance) {
   // GET /api/techservices/work-orders/:id
   fastify.get<{ Params: { id: string } }>(
     '/api/techservices/work-orders/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {
@@ -175,9 +175,9 @@ export async function techServicesWorkOrdersRoutes(fastify: FastifyInstance) {
   // POST /api/techservices/work-orders
   fastify.post<{ Body: WorkOrderInput }>(
     '/api/techservices/work-orders',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { title, description, status, priority, assetId, assignedEmployeeId, requestedAt, dueAt } = request.body
 
@@ -233,9 +233,9 @@ export async function techServicesWorkOrdersRoutes(fastify: FastifyInstance) {
   // PUT /api/techservices/work-orders/:id
   fastify.put<{ Params: { id: string }; Body: WorkOrderInput }>(
     '/api/techservices/work-orders/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { title, description, status, priority, assetId, assignedEmployeeId, requestedAt, dueAt, completedAt } = request.body

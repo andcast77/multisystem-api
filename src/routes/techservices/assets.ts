@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getTechServicesContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireTechServicesContext } from './auth-helper.js'
 
 type AssetInput = {
   name?: string
@@ -18,9 +19,9 @@ export async function techServicesAssetsRoutes(fastify: FastifyInstance) {
   // GET /api/techservices/assets
   fastify.get<{ Querystring: { search?: string; active?: string } }>(
     '/api/techservices/assets',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { search, active } = request.query
       const activeFilter = typeof active === 'string' ? active === 'true' : undefined
@@ -64,9 +65,9 @@ export async function techServicesAssetsRoutes(fastify: FastifyInstance) {
   // GET /api/techservices/assets/:id
   fastify.get<{ Params: { id: string } }>(
     '/api/techservices/assets/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {
@@ -94,9 +95,10 @@ export async function techServicesAssetsRoutes(fastify: FastifyInstance) {
   // POST /api/techservices/assets
   fastify.post<{ Body: AssetInput }>(
     '/api/techservices/assets',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
+
 
       const { name, brand, model, serialNumber, customerName, customerEmail, customerPhone, notes } = request.body
 
@@ -127,9 +129,9 @@ export async function techServicesAssetsRoutes(fastify: FastifyInstance) {
   // PUT /api/techservices/assets/:id
   fastify.put<{ Params: { id: string }; Body: AssetInput }>(
     '/api/techservices/assets/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { name, brand, model, serialNumber, customerName, customerEmail, customerPhone, notes, isActive } = request.body
@@ -213,9 +215,9 @@ export async function techServicesAssetsRoutes(fastify: FastifyInstance) {
   // DELETE /api/techservices/assets/:id (soft delete)
   fastify.delete<{ Params: { id: string } }>(
     '/api/techservices/assets/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {

@@ -1,11 +1,11 @@
 import { FastifyInstance } from 'fastify'
 import { sql } from '../../db/neon.js'
-import { getTechServicesContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireTechServicesContext } from './auth-helper.js'
 
 export async function techServicesMeRoutes(fastify: FastifyInstance) {
-  fastify.get('/api/techservices/me', async (request, reply) => {
-    const ctx = await getTechServicesContext(request, reply)
-    if (!ctx) return
+  fastify.get('/api/techservices/me', { preHandler: [requireAuth, requireTechServicesContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     try {
       const users = (await sql`

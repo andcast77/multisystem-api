@@ -1,35 +1,11 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, type User, userDisplayName } from '../db/neon.js'
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import { generateToken, requireAuth, verifyToken, type TokenPayload } from '../lib/auth.js'
+import { getUserCompanies, selectCompanyForUser, type CompanyRow } from '../lib/auth-context.js'
+import { sendBadRequest, sendForbidden, sendServerError } from '../lib/errors.js'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
-
-export type TokenPayload = {
-  id: string
-  email: string
-  role: string
-  companyId?: string
-  isSuperuser?: boolean
-  membershipRole?: string
-}
-
-// Helper function to generate JWT token (optionally with company context)
-function generateToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
-  })
-}
-
-// Helper function to verify JWT token (exported for use in other routes)
-export function verifyToken(token: string): TokenPayload | null {
-  try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload
-  } catch (error) {
-    return null
-  }
-}
+export type { TokenPayload } from '../lib/auth.js'
 
 export async function authRoutes(fastify: FastifyInstance) {
   // POST /api/auth/login - Login user
@@ -39,16 +15,101 @@ export async function authRoutes(fastify: FastifyInstance) {
       password: string
       companyId?: string
     }
-  }>('/api/auth/login', async (request, reply) => {
+  }>('/api/auth/login', {
+    schema: {
+      description: 'Autentica a un usuario y devuelve un token JWT.',
+      tags: ['Auth'],
+      body: {
+        type: 'object',
+        required: ['email', 'password'],
+        properties: {
+          email: { type: 'string', description: 'Correo electrónico', example: 'usuario@dominio.com' },
+          password: { type: 'string', description: 'Contraseña', example: '123456' },
+          companyId: { type: 'string', description: 'ID de la empresa (opcional)', example: 'uuid-empresa' }
+        }
+      },
+      response: {
+        200: {
+          description: 'Autenticación exitosa',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: true },
+            data: {
+              type: 'object',
+              properties: {
+                user: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', description: 'ID del usuario', example: 'uuid-123' },
+                    email: { type: 'string', description: 'Correo electrónico', example: 'usuario@dominio.com' },
+                    name: { type: 'string', description: 'Nombre completo', example: 'Juan Pérez' },
+                    role: { type: 'string', description: 'Rol', example: 'USER' },
+                    isSuperuser: { type: 'boolean', description: 'Superusuario', example: false }
+                  }
+                },
+                token: { type: 'string', description: 'Token JWT', example: 'jwt-token' },
+                companyId: { type: 'string', description: 'ID de la empresa', example: 'uuid-empresa' },
+                company: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', example: 'uuid-empresa' },
+                    name: { type: 'string', example: 'Empresa S.A.' },
+                    workifyEnabled: { type: 'boolean', example: true },
+                    shopflowEnabled: { type: 'boolean', example: false },
+                    technicalServicesEnabled: { type: 'boolean', example: true }
+                  }
+                },
+                companies: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string', example: 'uuid-empresa' },
+                      name: { type: 'string', example: 'Empresa S.A.' },
+                      workifyEnabled: { type: 'boolean', example: true },
+                      shopflowEnabled: { type: 'boolean', example: false },
+                      technicalServicesEnabled: { type: 'boolean', example: true },
+                      membershipRole: { type: 'string', example: 'OWNER' }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        400: {
+          description: 'Email y contraseña son requeridos',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: false },
+            error: { type: 'string', example: 'Email y contraseña son requeridos' }
+          }
+        },
+        401: {
+          description: 'Credenciales inválidas o usuario inactivo',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: false },
+            error: { type: 'string', example: 'Credenciales inválidas' }
+          }
+        },
+        500: {
+          description: 'Error interno',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: false },
+            error: { type: 'string', example: 'Error al autenticar usuario' },
+            message: { type: 'string', example: 'Error desconocido' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     try {
       const { email, password, companyId: bodyCompanyId } = request.body
 
       if (!email || !password) {
-        reply.code(400)
-        return {
-          success: false,
-          error: 'Email y contraseña son requeridos',
-        }
+        return sendBadRequest(reply, 'Email y contraseña son requeridos')
       }
 
       const users = (await sql`
@@ -93,60 +154,10 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean; membershipRole?: string }
-      let companies: CompanyRow[] = []
-      let selectedCompany: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean } | null = null
-      let selectedMembershipRole: string | null = null
-
-      // Superuser: get all companies; token may include companyId if bodyCompanyId provided
-      if (user.isSuperuser) {
-        const allCompanies = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-          FROM companies
-          WHERE "isActive" = true
-          ORDER BY name
-        `) as CompanyRow[]
-        companies = allCompanies
-        if (bodyCompanyId && allCompanies.some((c) => c.id === bodyCompanyId)) {
-          selectedCompany = allCompanies.find((c) => c.id === bodyCompanyId) ?? null
-        }
-      } else {
-        // Company members (company_members); fallback to user_roles
-        try {
-          const members = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled", cm."membershipRole" as "membershipRole"
-            FROM company_members cm
-            JOIN companies c ON c.id = cm."companyId"
-            WHERE cm."userId" = ${user.id} AND c."isActive" = true
-            ORDER BY c.name
-          `) as CompanyRow[]
-          if (members.length > 0) {
-            companies = members
-          }
-        } catch {
-          // company_members may not exist yet
-        }
-        if (companies.length === 0) {
-          const ur = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled"
-            FROM user_roles ur
-            JOIN companies c ON c.id = ur."companyId"
-            WHERE ur."userId" = ${user.id}
-            ORDER BY c.name
-          `) as CompanyRow[]
-          companies = ur.map((r) => ({ ...r, membershipRole: undefined }))
-        }
-        if (bodyCompanyId && companies.some((c) => c.id === bodyCompanyId)) {
-          const row = companies.find((c) => c.id === bodyCompanyId)
-          if (row) {
-            selectedCompany = row
-            selectedMembershipRole = row.membershipRole ?? null
-          }
-        } else if (companies.length === 1) {
-          selectedCompany = { id: companies[0].id, name: companies[0].name, workifyEnabled: companies[0].workifyEnabled, shopflowEnabled: companies[0].shopflowEnabled, technicalServicesEnabled: companies[0].technicalServicesEnabled }
-          selectedMembershipRole = companies[0].membershipRole ?? null
-        }
-      }
+      const companies = await getUserCompanies(user.id, user.isSuperuser ?? false)
+      const selected = selectCompanyForUser(companies, bodyCompanyId)
+      const selectedCompany = selected?.selectedCompany ?? null
+      const selectedMembershipRole = selected?.selectedMembershipRole ?? null
 
       const tokenPayload: TokenPayload = {
         id: user.id,
@@ -186,22 +197,29 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       return { success: true, data }
     } catch (error) {
-      fastify.log.error(error)
-      reply.code(500)
-      const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
-      return {
-        success: false,
-        error: 'Error al autenticar usuario',
-        message: errorMessage,
-      }
+      return sendServerError(reply, error, fastify.log, 'Error al autenticar usuario')
     }
   })
 
   // POST /api/auth/logout - Logout (client clears cookie)
-  fastify.post('/api/auth/logout', async (_request, reply) => {
-    reply.code(200)
-    return { success: true }
-  })
+  fastify.post('/api/auth/logout', {
+    schema: {
+      description: 'Cierra la sesión del usuario (el cliente debe limpiar el token).',
+      tags: ['Auth'],
+      response: {
+        200: {
+          description: 'Logout exitoso',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: true }
+          }
+        }
+      }
+    }
+  }, async (_request, reply) => {
+    reply.code(200);
+    return { success: true };
+  });
 
   // POST /api/auth/register - Register new company (Hub only). With companyName: creates company, user as owner, CompanyMember OWNER, role admin + user_role.
   fastify.post<{
@@ -215,7 +233,68 @@ export async function authRoutes(fastify: FastifyInstance) {
       shopflowEnabled?: boolean
       technicalServicesEnabled?: boolean
     }
-  }>('/api/auth/register', async (request, reply) => {
+  }>('/api/auth/register', {
+    schema: {
+      description: 'Registra un nuevo usuario y empresa (solo Hub).',
+      tags: ['Auth'],
+      body: {
+        type: 'object',
+        required: ['email', 'password'],
+        properties: {
+          email: { type: 'string', description: 'Correo electrónico', example: 'usuario@dominio.com' },
+          password: { type: 'string', description: 'Contraseña', example: '123456' },
+          firstName: { type: 'string', description: 'Nombre', example: 'Juan' },
+          lastName: { type: 'string', description: 'Apellido', example: 'Pérez' },
+          companyName: { type: 'string', description: 'Nombre de la empresa', example: 'Empresa S.A.' },
+          workifyEnabled: { type: 'boolean', description: 'Módulo Workify habilitado', example: true },
+          shopflowEnabled: { type: 'boolean', description: 'Módulo Shopflow habilitado', example: false },
+          technicalServicesEnabled: { type: 'boolean', description: 'Módulo Servicios Técnicos habilitado', example: true }
+        }
+      },
+      response: {
+        200: {
+          description: 'Registro exitoso',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: true },
+            data: {
+              type: 'object',
+              properties: {
+                user: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', example: 'uuid-123' },
+                    email: { type: 'string', example: 'usuario@dominio.com' },
+                    name: { type: 'string', example: 'Juan Pérez' },
+                    role: { type: 'string', example: 'USER' }
+                  }
+                },
+                companyId: { type: 'string', example: 'uuid-empresa' },
+                token: { type: 'string', example: 'jwt-token' }
+              }
+            }
+          }
+        },
+        400: {
+          description: 'Ya existe un usuario con este email',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: false },
+            error: { type: 'string', example: 'Ya existe un usuario con este email' }
+          }
+        },
+        500: {
+          description: 'Error interno',
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: false },
+            error: { type: 'string', example: 'Error al registrar usuario' },
+            message: { type: 'string', example: 'Error desconocido' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     try {
       const { email, password, firstName = '', lastName = '', companyName, workifyEnabled = true, shopflowEnabled = false, technicalServicesEnabled = false } = request.body
 
@@ -428,31 +507,8 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       // Si el usuario no tiene empresa preferida, asignar una en BD antes de responder
       if (!preferredCompanyId) {
-        let defaultCompanyId: string | null = null
-        if (decoded.isSuperuser) {
-          const rows = (await sql`
-            SELECT id FROM companies WHERE "isActive" = true ORDER BY name LIMIT 1
-          `) as Array<{ id: string }>
-          defaultCompanyId = rows[0]?.id ?? null
-        } else {
-          try {
-            const rows = (await sql`
-              SELECT c.id FROM company_members cm
-              JOIN companies c ON c.id = cm."companyId"
-              WHERE cm."userId" = ${decoded.id} AND c."isActive" = true
-              ORDER BY c.name LIMIT 1
-            `) as Array<{ id: string }>
-            defaultCompanyId = rows[0]?.id ?? null
-          } catch {
-            const rows = (await sql`
-              SELECT c.id FROM user_roles ur
-              JOIN companies c ON c.id = ur."companyId"
-              WHERE ur."userId" = ${decoded.id} AND c."isActive" = true
-              ORDER BY c.name LIMIT 1
-            `) as Array<{ id: string }>
-            defaultCompanyId = rows[0]?.id ?? null
-          }
-        }
+        const companies = await getUserCompanies(decoded.id, decoded.isSuperuser ?? false)
+        const defaultCompanyId = companies[0]?.id ?? null
         if (defaultCompanyId) {
           await sql`
             UPDATE users SET "shopflowPreferredCompanyId" = ${defaultCompanyId}
@@ -589,37 +645,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         return { success: false, error: 'Token inválido o expirado' }
       }
 
-      type CompanyRow = { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean; membershipRole?: string }
-      let companies: CompanyRow[] = []
-
-      if (decoded.isSuperuser) {
-        companies = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-          FROM companies
-          WHERE "isActive" = true
-          ORDER BY name
-        `) as CompanyRow[]
-      } else {
-        try {
-          companies = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled", cm."membershipRole" as "membershipRole"
-            FROM company_members cm
-            JOIN companies c ON c.id = cm."companyId"
-            WHERE cm."userId" = ${decoded.id} AND c."isActive" = true
-            ORDER BY c.name
-          `) as CompanyRow[]
-        } catch {
-          const ur = (await sql`
-            SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled"
-            FROM user_roles ur
-            JOIN companies c ON c.id = ur."companyId"
-            WHERE ur."userId" = ${decoded.id} AND c."isActive" = true
-            ORDER BY c.name
-          `) as CompanyRow[]
-          companies = ur
-        }
-      }
-
+      const companies = await getUserCompanies(decoded.id, decoded.isSuperuser ?? false)
       return { success: true, data: companies }
     } catch (error) {
       fastify.log.error(error)
@@ -632,7 +658,15 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post<{
     Headers: { authorization?: string }
     Body: { companyId: string }
-  }>('/api/auth/context', async (request, reply) => {
+  }>('/api/auth/context', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['companyId'],
+        properties: { companyId: { type: 'string' } },
+      },
+    },
+  }, async (request, reply) => {
     try {
       const authHeader = request.headers.authorization
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -716,7 +750,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /api/auth/sessions - Create session (store session token)
+  // POST /api/auth/sessions - Create session (store session token). Caller must be the user or superuser.
   fastify.post<{
     Body: {
       userId: string
@@ -725,12 +759,30 @@ export async function authRoutes(fastify: FastifyInstance) {
       userAgent?: string
       expiresAt: string
     }
-  }>('/api/auth/sessions', async (request, reply) => {
+  }>('/api/auth/sessions', {
+    preHandler: [requireAuth],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['userId', 'sessionToken'],
+        properties: {
+          userId: { type: 'string' },
+          sessionToken: { type: 'string' },
+          ipAddress: { type: 'string' },
+          userAgent: { type: 'string' },
+          expiresAt: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
     try {
+      const decoded = request.user!
       const { userId, sessionToken, ipAddress, userAgent, expiresAt } = request.body
       if (!userId || !sessionToken) {
-        reply.code(400)
-        return { success: false, error: 'userId y sessionToken son requeridos' }
+        return sendBadRequest(reply, 'userId y sessionToken son requeridos')
+      }
+      if (decoded.id !== userId && !decoded.isSuperuser) {
+        return sendForbidden(reply, 'Solo puedes crear sesión para tu propio usuario')
       }
       const user = await sqlQuery<{ id: string; role: string }>(sql`
         SELECT id, role FROM users WHERE id = ${userId} AND "isActive" = true LIMIT 1
@@ -777,13 +829,25 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // GET /api/auth/sessions?userId= - List user sessions
-  fastify.get<{ Querystring: { userId: string } }>('/api/auth/sessions', async (request, reply) => {
+  // GET /api/auth/sessions?userId= - List user sessions. Caller must be the user or superuser.
+  fastify.get<{ Querystring: { userId: string }   }>('/api/auth/sessions', {
+    preHandler: [requireAuth],
+    schema: {
+      querystring: {
+        type: 'object',
+        required: ['userId'],
+        properties: { userId: { type: 'string' } },
+      },
+    },
+  }, async (request, reply) => {
     try {
+      const decoded = request.user!
       const { userId } = request.query
       if (!userId) {
-        reply.code(400)
-        return { success: false, error: 'userId es requerido' }
+        return sendBadRequest(reply, 'userId es requerido')
+      }
+      if (decoded.id !== userId && !decoded.isSuperuser) {
+        return sendForbidden(reply, 'Solo puedes listar tus propias sesiones')
       }
       const rows = await sqlQuery<any>(sql`
         SELECT id, "userId", "sessionToken", "ipAddress", "userAgent", "expiresAt", "createdAt"
@@ -797,26 +861,27 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // DELETE /api/auth/sessions/:token?userId= - Terminate one session
+  // DELETE /api/auth/sessions/:token - Terminate one session. Caller must own the session or be superuser.
   fastify.delete<{ Params: { token: string }; Querystring: { userId?: string } }>(
     '/api/auth/sessions/:token',
+    { preHandler: [requireAuth] },
     async (request, reply) => {
       try {
+        const caller = request.user!
         const { token } = request.params
-        const { userId } = request.query
-        const decoded = decodeURIComponent(token)
+        const decodedToken = decodeURIComponent(token)
         const existing = await sqlQuery<any>(sql`
-          SELECT id, "userId" FROM sessions WHERE "sessionToken" = ${decoded} LIMIT 1
+          SELECT id, "userId" FROM sessions WHERE "sessionToken" = ${decodedToken} LIMIT 1
         `)
         if (existing.length === 0) {
           reply.code(404)
           return { success: false, error: 'Session not found' }
         }
-        if (userId && existing[0].userId !== userId) {
-          reply.code(403)
-          return { success: false, error: 'Access denied' }
+        const sessionUserId = existing[0].userId
+        if (caller.id !== sessionUserId && !caller.isSuperuser) {
+          return sendForbidden(reply, 'No puedes eliminar sesiones de otro usuario')
         }
-        await sqlQuery(sql`DELETE FROM sessions WHERE "sessionToken" = ${decoded}`)
+        await sqlQuery(sql`DELETE FROM sessions WHERE "sessionToken" = ${decodedToken}`)
         return { success: true }
       } catch (error) {
         fastify.log.error(error)
@@ -826,15 +891,30 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   )
 
-  // POST /api/auth/sessions/terminate-others - Terminate all sessions except current
+  // POST /api/auth/sessions/terminate-others - Terminate all sessions except current. Caller must be the user or superuser.
   fastify.post<{
     Body: { userId: string; currentSessionToken: string }
-  }>('/api/auth/sessions/terminate-others', async (request, reply) => {
+  }>('/api/auth/sessions/terminate-others', {
+    preHandler: [requireAuth],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['userId', 'currentSessionToken'],
+        properties: {
+          userId: { type: 'string' },
+          currentSessionToken: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
     try {
+      const caller = request.user!
       const { userId, currentSessionToken } = request.body
       if (!userId || !currentSessionToken) {
-        reply.code(400)
-        return { success: false, error: 'userId y currentSessionToken son requeridos' }
+        return sendBadRequest(reply, 'userId y currentSessionToken son requeridos')
+      }
+      if (caller.id !== userId && !caller.isSuperuser) {
+        return sendForbidden(reply, 'Solo puedes terminar tus propias sesiones')
       }
       await sqlQuery(sql`
         DELETE FROM sessions WHERE "userId" = ${userId} AND "sessionToken" != ${currentSessionToken}

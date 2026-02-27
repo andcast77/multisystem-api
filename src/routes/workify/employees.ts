@@ -1,14 +1,14 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyEmployeesRoutes(fastify: FastifyInstance) {
   // GET /api/workify/employees - List employees (company-scoped)
   fastify.get<{
     Querystring: { page?: string; limit?: string; search?: string; status?: string; departmentId?: string }
-  }>('/api/workify/employees', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  }>('/api/workify/employees', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     const { page = '1', limit = '10', search, status, departmentId } = request.query
     const pageNum = Math.max(1, parseInt(page, 10))
@@ -74,9 +74,8 @@ export async function workifyEmployeesRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/workify/employees/:id - Get one employee
-  fastify.get<{ Params: { id: string } }>('/api/workify/employees/:id', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get<{ Params: { id: string }   }>('/api/workify/employees/:id', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     const { id } = request.params
     try {
@@ -105,9 +104,9 @@ export async function workifyEmployeesRoutes(fastify: FastifyInstance) {
   // GET /api/workify/employees/:id/attendance - Employee attendance (optional month)
   fastify.get<{ Params: { id: string }; Querystring: { month?: string } }>(
     '/api/workify/employees/:id/attendance',
+    { preHandler: [requireAuth, requireWorkifyContext] },
     async (request, reply) => {
-      const ctx = await getWorkifyContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { month } = request.query

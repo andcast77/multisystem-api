@@ -1,19 +1,18 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/loyalty/config - Get loyalty configuration
   fastify.get('/api/shopflow/loyalty/config', async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
       const config = await sqlQuery(sql`
         SELECT 
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase", "isActive"
         FROM loyalty_configs
-        WHERE "companyId" = ${ctx.companyId} AND "isActive" = true
+        WHERE "isActive" = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -67,8 +66,6 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
     }
   }>('/api/shopflow/loyalty/config', async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
       const { pointsPerDollar, redemptionRate, pointsExpireMonths, minPurchaseForPoints, maxPointsPerPurchase } =
         request.body
 
@@ -78,7 +75,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           "pointsPerDollar", "redemptionRate", "pointsExpireMonths",
           "minPurchaseForPoints", "maxPointsPerPurchase"
         FROM loyalty_configs
-        WHERE "companyId" = ${ctx.companyId} AND "isActive" = true
+        WHERE "isActive" = true
         ORDER BY "createdAt" DESC
         LIMIT 1
       `)
@@ -98,7 +95,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
           "minPurchaseForPoints", "maxPointsPerPurchase", "isActive"
         )
         VALUES (
-          ${ctx.companyId},
+          NULL,
           ${pointsPerDollar ?? currentConfig.pointsPerDollar},
           ${redemptionRate ?? currentConfig.redemptionRate},
           ${pointsExpireMonths ?? currentConfig.pointsExpireMonths},
@@ -116,7 +113,7 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
         await sqlQuery(sql`
           UPDATE loyalty_configs
           SET "isActive" = false
-          WHERE "companyId" = ${ctx.companyId} AND id != ${newConfig[0].id} AND "isActive" = true
+          WHERE id != ${newConfig[0].id} AND "isActive" = true
         `)
       }
 
@@ -147,15 +144,15 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/loyalty/points/:customerId - Get customer points balance
   fastify.get<{ Params: { customerId: string } }>(
     '/api/shopflow/loyalty/points/:customerId',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { customerId } = request.params
 
         // Check customer exists (same company)
         const customer = await sqlQuery(sql`
-          SELECT id, name FROM customers WHERE id = ${customerId} AND "companyId" = ${ctx.companyId} LIMIT 1
+          SELECT id, name FROM customers WHERE id = ${customerId} LIMIT 1
         `)
 
         if (customer.length === 0) {
@@ -245,10 +242,9 @@ export async function shopflowLoyaltyRoutes(fastify: FastifyInstance) {
       purchaseAmount: number
       saleId: string
     }
-  }>('/api/shopflow/loyalty/points/award', async (request, reply) => {
+  }>('/api/shopflow/loyalty/points/award', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { customerId, purchaseAmount, saleId } = request.body
 
       // Get loyalty config (company-scoped)

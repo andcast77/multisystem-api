@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export type Supplier = {
   id: string
@@ -23,10 +24,10 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/suppliers - List suppliers with filters
   fastify.get<{ Querystring: { search?: string; active?: string } }>(
     '/api/shopflow/suppliers',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { search, active } = request.query
 
         let query = sql`
@@ -105,10 +106,9 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
   )
 
   // GET /api/shopflow/suppliers/:id - Get supplier by ID
-  fastify.get<{ Params: { id: string } }>('/api/shopflow/suppliers/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/shopflow/suppliers/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       const supplier = await sqlQuery<any>(sql`
@@ -177,10 +177,9 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
   })
 
   // POST /api/shopflow/suppliers - Create supplier
-  fastify.post<{ Body: Supplier }>('/api/shopflow/suppliers', async (request, reply) => {
+  fastify.post<{ Body: Supplier }>('/api/shopflow/suppliers', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { name, email, phone, address, city, state, taxId, active } =
         request.body
 
@@ -226,10 +225,10 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
   // PUT /api/shopflow/suppliers/:id - Update supplier
   fastify.put<{ Params: { id: string }; Body: Partial<Supplier> }>(
     '/api/shopflow/suppliers/:id',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { id } = request.params
         const { name, email, phone, address, city, state, taxId, active } =
           request.body
@@ -336,10 +335,9 @@ export async function shopflowSuppliersRoutes(fastify: FastifyInstance) {
   )
 
   // DELETE /api/shopflow/suppliers/:id - Delete supplier
-  fastify.delete<{ Params: { id: string } }>('/api/shopflow/suppliers/:id', async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/api/shopflow/suppliers/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       // Check if supplier exists

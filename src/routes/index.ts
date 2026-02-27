@@ -4,6 +4,7 @@ import { usersRoutes } from './users.js'
 import { authRoutes } from './auth.js'
 import { companyMembersRoutes } from './company-members.js'
 import { companiesRoutes } from './companies.js'
+import { attendanceRoutes } from './services/attendance.js'
 import { shopflowCustomersRoutes } from './shopflow/customers.js'
 import { shopflowCategoriesRoutes } from './shopflow/categories.js'
 import { shopflowSuppliersRoutes } from './shopflow/suppliers.js'
@@ -22,82 +23,18 @@ import { shopflowInventoryTransfersRoutes } from './shopflow/inventory-transfers
 import { shopflowPushSubscriptionsRoutes } from './shopflow/push-subscriptions.js'
 import { workifyRoutes } from './workify/index.js'
 import { techServicesRoutes } from './techservices/index.js'
+import { setupSwagger } from '../swagger.js'
 
 export async function registerRoutes(fastify: FastifyInstance) {
-  // Ruta raíz - información de la API
-  fastify.get('/', async () => {
-    return {
-      name: 'Multisystem API',
-      version: '0.1.0',
-      status: 'running',
-      endpoints: {
-        health: '/health',
-        auth: {
-          login: 'POST /api/auth/login',
-          logout: 'POST /api/auth/logout',
-          register: 'POST /api/auth/register',
-          me: 'GET /api/auth/me',
-          verify: 'POST /api/auth/verify',
-          sessions: 'POST/GET/DELETE /api/auth/sessions*',
-        },
-        users: {
-          list: 'GET /api/users',
-          getById: 'GET /api/users/:id',
-        },
-        shopflow: {
-          customers: {
-            list: 'GET /api/shopflow/customers',
-            getById: 'GET /api/shopflow/customers/:id',
-            create: 'POST /api/shopflow/customers',
-            update: 'PUT /api/shopflow/customers/:id',
-            delete: 'DELETE /api/shopflow/customers/:id',
-          },
-          categories: {
-            list: 'GET /api/shopflow/categories',
-            getById: 'GET /api/shopflow/categories/:id',
-            create: 'POST /api/shopflow/categories',
-            update: 'PUT /api/shopflow/categories/:id',
-            delete: 'DELETE /api/shopflow/categories/:id',
-          },
-          suppliers: {
-            list: 'GET /api/shopflow/suppliers',
-            getById: 'GET /api/shopflow/suppliers/:id',
-            create: 'POST /api/shopflow/suppliers',
-            update: 'PUT /api/shopflow/suppliers/:id',
-            delete: 'DELETE /api/shopflow/suppliers/:id',
-          },
-          'store-config': {
-            get: 'GET /api/shopflow/store-config',
-            update: 'PUT /api/shopflow/store-config',
-            nextInvoiceNumber: 'POST /api/shopflow/store-config/next-invoice-number',
-          },
-          sales: {
-            list: 'GET /api/shopflow/sales',
-            getById: 'GET /api/shopflow/sales/:id',
-            create: 'POST /api/shopflow/sales',
-            cancel: 'POST /api/shopflow/sales/:id/cancel',
-            refund: 'POST /api/shopflow/sales/:id/refund',
-          },
-        },
-        workify: {
-          me: 'GET /api/workify/me',
-        },
-        techservices: {
-          me: 'GET /api/techservices/me',
-          assets: 'GET/POST/PUT/DELETE /api/techservices/assets*',
-          workOrders: 'GET/POST/PUT /api/techservices/work-orders*',
-          parts: 'GET/POST/PUT/DELETE /api/techservices/parts*',
-          visits: 'GET/POST/PUT/DELETE /api/techservices/visits*',
-        },
-      },
-    }
-  })
+  await setupSwagger(fastify)
+
 
   await fastify.register(healthRoutes)
   await fastify.register(usersRoutes)
   await fastify.register(authRoutes)
   await fastify.register(companyMembersRoutes)
   await fastify.register(companiesRoutes)
+  await fastify.register(attendanceRoutes)
   await fastify.register(shopflowCustomersRoutes)
   await fastify.register(shopflowCategoriesRoutes)
   await fastify.register(shopflowSuppliersRoutes)

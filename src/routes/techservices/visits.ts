@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getTechServicesContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireTechServicesContext } from './auth-helper.js'
 
 type VisitInput = {
   scheduledStartAt?: string
@@ -14,9 +15,9 @@ export async function techServicesVisitsRoutes(fastify: FastifyInstance) {
   // GET /api/techservices/work-orders/:id/visits
   fastify.get<{ Params: { id: string } }>(
     '/api/techservices/work-orders/:id/visits',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {
@@ -57,9 +58,9 @@ export async function techServicesVisitsRoutes(fastify: FastifyInstance) {
   // POST /api/techservices/work-orders/:id/visits
   fastify.post<{ Params: { id: string }; Body: VisitInput }>(
     '/api/techservices/work-orders/:id/visits',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { scheduledStartAt, scheduledEndAt, status, assignedEmployeeId, notes } = request.body
@@ -112,9 +113,9 @@ export async function techServicesVisitsRoutes(fastify: FastifyInstance) {
   // PUT /api/techservices/visits/:id
   fastify.put<{ Params: { id: string }; Body: VisitInput }>(
     '/api/techservices/visits/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { scheduledStartAt, scheduledEndAt, status, assignedEmployeeId, notes } = request.body
@@ -193,9 +194,9 @@ export async function techServicesVisitsRoutes(fastify: FastifyInstance) {
   // DELETE /api/techservices/visits/:id
   fastify.delete<{ Params: { id: string } }>(
     '/api/techservices/visits/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {

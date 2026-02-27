@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import env from '@fastify/env'
 import { registerRoutes } from './routes/index.js'
+import { registerErrorHandler } from './lib/errors.js'
 import { existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
@@ -29,6 +30,14 @@ const envSchema = {
     NODE_ENV: {
       type: 'string',
       default: 'development'
+    },
+    JWT_SECRET: {
+      type: 'string',
+      default: ''
+    },
+    JWT_EXPIRES_IN: {
+      type: 'string',
+      default: '7d'
     }
   }
 }
@@ -50,6 +59,14 @@ async function start() {
       CORS_ORIGIN: string
       DATABASE_URL: string
       NODE_ENV: string
+      JWT_SECRET: string
+      JWT_EXPIRES_IN: string
+    }
+
+    // Fail fast in production if JWT_SECRET is missing
+    if (config.NODE_ENV === 'production' && (!config.JWT_SECRET || config.JWT_SECRET.trim() === '')) {
+      fastify.log.error('JWT_SECRET is required in production. Set it in .env or environment.')
+      process.exit(1)
     }
 
     // Registrar CORS con orígenes desde .env
@@ -57,6 +74,36 @@ async function start() {
       origin: config.CORS_ORIGIN.split(','),
       credentials: true
     })
+
+    // Remove `example` metadata from route schemas at registration time
+    function stripExamples(obj: any): any {
+      if (Array.isArray(obj)) return obj.map(stripExamples)
+      if (obj && typeof obj === 'object') {
+        const copy: any = {}
+        for (const [k, v] of Object.entries(obj)) {
+          if (k === 'example') continue
+          copy[k] = stripExamples(v)
+        }
+        return copy
+      }
+      return obj
+    }
+
+    fastify.addHook('onRoute', (routeOptions) => {
+      if (routeOptions && 'schema' in routeOptions && routeOptions.schema) {
+        try {
+          // Replace schema with a version that has no `example` keys
+          // This prevents Ajv strict-mode errors while keeping source files unchanged
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          routeOptions.schema = stripExamples(routeOptions.schema)
+        } catch (e) {
+          fastify.log.warn({ err: e }, 'Failed stripping examples from schema')
+        }
+      }
+    })
+
+    registerErrorHandler(fastify)
 
     // Registrar rutas
     await fastify.register(registerRoutes)

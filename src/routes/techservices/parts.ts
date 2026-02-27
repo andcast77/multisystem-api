@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getTechServicesContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireTechServicesContext } from './auth-helper.js'
 
 type PartInput = {
   name?: string
@@ -13,9 +14,9 @@ export async function techServicesPartsRoutes(fastify: FastifyInstance) {
   // GET /api/techservices/work-orders/:id/parts
   fastify.get<{ Params: { id: string } }>(
     '/api/techservices/work-orders/:id/parts',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {
@@ -39,9 +40,9 @@ export async function techServicesPartsRoutes(fastify: FastifyInstance) {
   // POST /api/techservices/work-orders/:id/parts
   fastify.post<{ Params: { id: string }; Body: PartInput }>(
     '/api/techservices/work-orders/:id/parts',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { name, quantity = 1, unitCost, notes } = request.body
@@ -85,9 +86,9 @@ export async function techServicesPartsRoutes(fastify: FastifyInstance) {
   // PUT /api/techservices/parts/:id
   fastify.put<{ Params: { id: string }; Body: PartInput }>(
     '/api/techservices/parts/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       const { name, quantity, unitCost, notes } = request.body
@@ -149,9 +150,9 @@ export async function techServicesPartsRoutes(fastify: FastifyInstance) {
   // DELETE /api/techservices/parts/:id
   fastify.delete<{ Params: { id: string } }>(
     '/api/techservices/parts/:id',
+    { preHandler: [requireAuth, requireTechServicesContext] },
     async (request, reply) => {
-      const ctx = await getTechServicesContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request)
 
       const { id } = request.params
       try {

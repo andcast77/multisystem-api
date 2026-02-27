@@ -1,24 +1,11 @@
-import { FastifyInstance } from 'fastify'
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
 
 export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
   // POST /api/shopflow/action-history - Log an action
-  fastify.post<{
-    Body: {
-      userId: string
-      action: string
-      entityType: string
-      entityId?: string
-      details?: Record<string, unknown>
-      ipAddress?: string
-      userAgent?: string
-    }
-  }>('/api/shopflow/action-history', async (request, reply) => {
+  fastify.post('/api/shopflow/action-history', async (request: any, reply: any) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
-      const { userId, action, entityType, entityId, details, ipAddress, userAgent } = request.body
+      const { userId, action, entityType, entityId, details, ipAddress, userAgent } = (request.body ?? {})
 
       if (!userId || !action || !entityType) {
         reply.code(400)
@@ -31,7 +18,6 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
       const result = await sqlQuery(sql`
         INSERT INTO action_history (
           id,
-          "companyId",
           "userId",
           action,
           "entityType",
@@ -42,7 +28,6 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
         )
         VALUES (
           gen_random_uuid(),
-          ${ctx.companyId},
           ${userId},
           ${action},
           ${entityType},
@@ -71,21 +56,8 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/action-history - Get action history with filters
-  fastify.get<{
-    Querystring: {
-      userId?: string
-      action?: string
-      entityType?: string
-      entityId?: string
-      startDate?: string
-      endDate?: string
-      page?: string
-      limit?: string
-    }
-  }>('/api/shopflow/action-history', async (request, reply) => {
+  fastify.get('/api/shopflow/action-history', async (request: any, reply: any) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
       const {
         userId,
         action,
@@ -95,7 +67,7 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
         endDate,
         page = '1',
         limit = '50',
-      } = request.query
+      } = (request.query ?? {})
 
       const pageNum = parseInt(page)
       const limitNum = parseInt(limit)
@@ -119,50 +91,46 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
           u.role as "user.role"
         FROM action_history ah
         INNER JOIN users u ON ah."userId" = u.id
-        WHERE ah."companyId" = ${ctx.companyId}
+        WHERE 1 = 1
       `
 
       if (userId) {
         query = sql`${query} AND ah."userId" = ${userId}`
       }
-
       if (action) {
         query = sql`${query} AND ah.action = ${action}`
       }
-
       if (entityType) {
         query = sql`${query} AND ah."entityType" = ${entityType}`
       }
-
       if (entityId) {
         query = sql`${query} AND ah."entityId" = ${entityId}`
       }
-
       if (startDate) {
         query = sql`${query} AND ah."createdAt" >= ${new Date(startDate)}`
       }
-
       if (endDate) {
         query = sql`${query} AND ah."createdAt" <= ${new Date(endDate)}`
       }
 
-      // Get total count
-      const countQuery = sql`
+      // Total count
+      let countQuery = sql`
         SELECT COUNT(*) as total
         FROM action_history ah
-        WHERE ah."companyId" = ${ctx.companyId}
-          ${userId ? sql`AND ah."userId" = ${userId}` : sql``}
-          ${action ? sql`AND ah.action = ${action}` : sql``}
-          ${entityType ? sql`AND ah."entityType" = ${entityType}` : sql``}
-          ${entityId ? sql`AND ah."entityId" = ${entityId}` : sql``}
-          ${startDate ? sql`AND ah."createdAt" >= ${new Date(startDate)}` : sql``}
-          ${endDate ? sql`AND ah."createdAt" <= ${new Date(endDate)}` : sql``}
+        INNER JOIN users u ON ah."userId" = u.id
+        WHERE 1 = 1
       `
+      if (userId) countQuery = sql`${countQuery} AND ah."userId" = ${userId}`
+      if (action) countQuery = sql`${countQuery} AND ah.action = ${action}`
+      if (entityType) countQuery = sql`${countQuery} AND ah."entityType" = ${entityType}`
+      if (entityId) countQuery = sql`${countQuery} AND ah."entityId" = ${entityId}`
+      if (startDate) countQuery = sql`${countQuery} AND ah."createdAt" >= ${new Date(startDate)}`
+      if (endDate) countQuery = sql`${countQuery} AND ah."createdAt" <= ${new Date(endDate)}`
 
       const countResult = await sqlQuery(countQuery)
       const total = parseInt((countResult[0] as { total: string })?.total || '0')
 
-      // Get paginated results
+      // Paginated results
       query = sql`
         ${query}
         ORDER BY ah."createdAt" DESC
@@ -214,22 +182,11 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/action-history/user/:userId - Get action history for a specific user
-  fastify.get<{
-    Params: { userId: string }
-    Querystring: {
-      action?: string
-      entityType?: string
-      entityId?: string
-      startDate?: string
-      endDate?: string
-      page?: string
-      limit?: string
-    }
-  }>('/api/shopflow/action-history/user/:userId', async (request, reply) => {
+  fastify.get('/api/shopflow/action-history/user/:userId', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const { userId } = request.params
-      const queryParams = { ...request.query, userId }
-      const authHeader = request.headers.authorization
+      const { userId } = request.params as any
+      const queryParams = { ...(request.query ?? {}), userId }
+      const authHeader = request.headers?.authorization
       const response = await fastify.inject({
         method: 'GET',
         url: '/api/shopflow/action-history',
@@ -250,37 +207,30 @@ export async function shopflowActionHistoryRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/action-history/entity/:entityType/:entityId - Get actions for a specific entity
-  fastify.get<{
-    Params: { entityType: string; entityId: string }
-    Querystring: {
-      userId?: string
-      action?: string
-      startDate?: string
-      endDate?: string
-      page?: string
-      limit?: string
-    }
-  }>('/api/shopflow/action-history/entity/:entityType/:entityId', async (request, reply) => {
-    try {
-      const { entityType, entityId } = request.params
-      const queryParams = { ...request.query, entityType, entityId }
-      const authHeader = request.headers.authorization
-      const response = await fastify.inject({
-        method: 'GET',
-        url: '/api/shopflow/action-history',
-        query: queryParams as any,
-        headers: authHeader ? { authorization: authHeader } : {},
-      })
-      return JSON.parse(response.body)
-    } catch (error) {
-      fastify.log.error(error)
-      reply.code(500)
-      const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
-      return {
-        success: false,
-        error: 'Error al obtener historial de acciones de la entidad',
-        message: errorMessage,
+  fastify.get(
+    '/api/shopflow/action-history/entity/:entityType/:entityId',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const { entityType, entityId } = request.params as any
+        const queryParams = { ...(request.query ?? {}), entityType, entityId }
+        const authHeader = request.headers?.authorization
+        const response = await fastify.inject({
+          method: 'GET',
+          url: '/api/shopflow/action-history',
+          query: queryParams as any,
+          headers: authHeader ? { authorization: authHeader } : {},
+        })
+        return JSON.parse(response.body)
+      } catch (error) {
+        fastify.log.error(error)
+        reply.code(500)
+        const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+        return {
+          success: false,
+          error: 'Error al obtener historial de acciones de la entidad',
+          message: errorMessage,
+        }
       }
     }
-  })
+  )
 }

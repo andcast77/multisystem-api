@@ -1,12 +1,12 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { sql } from '../../db/neon.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifySpecialAssignmentsRoutes(fastify: FastifyInstance) {
   // GET /api/workify/employees/special-assignments - List special day assignments (company-scoped)
-  fastify.get('/api/workify/employees/special-assignments', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get('/api/workify/employees/special-assignments', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     try {
       const rows = (await sql`

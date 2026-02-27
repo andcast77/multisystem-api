@@ -1,12 +1,12 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { sql } from '../../db/neon.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyPositionsRoutes(fastify: FastifyInstance) {
   // GET /api/workify/positions - List positions (company-scoped via department)
-  fastify.get('/api/workify/positions', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get('/api/workify/positions', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     try {
       const rows = (await sql`
@@ -27,9 +27,8 @@ export async function workifyPositionsRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/workify/positions/:id
-  fastify.get<{ Params: { id: string } }>('/api/workify/positions/:id', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get<{ Params: { id: string } }>('/api/workify/positions/:id', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const ctx = contextFromRequest(request)
 
     const { id } = request.params
     try {

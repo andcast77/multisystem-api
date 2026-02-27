@@ -1,3 +1,34 @@
+## 📄 Documentación Swagger
+## Comportamiento del endpoint raíz
+
+Usa `/api/docs` para consultar la documentación interactiva de la API.
+
+La API cuenta con documentación interactiva generada automáticamente mediante Swagger/OpenAPI.
+
+### Acceso a la documentación
+
+Inicia el servidor y accede a:
+
+```
+http://localhost:3000/api/docs
+```
+
+Aquí podrás explorar todos los endpoints, parámetros, modelos y ejemplos de respuesta.
+
+### Ejemplo de uso
+
+1. Abre tu navegador y visita `/api/docs`.
+2. Explora los endpoints disponibles (usuarios, autenticación, salud, etc).
+3. Prueba peticiones directamente desde la interfaz.
+
+### Actualización automática
+
+La documentación se actualiza automáticamente al agregar o modificar rutas y modelos en el código.
+
+### Recursos
+
+- [Swagger UI](https://swagger.io/tools/swagger-ui/)
+- [OpenAPI Specification](https://swagger.io/specification/)
 # Multisystem API
 
 API compartida Fastify para la plataforma Multisystem. Servicio backend que proporciona endpoints HTTP para los módulos frontend.

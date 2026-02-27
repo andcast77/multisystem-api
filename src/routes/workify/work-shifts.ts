@@ -1,18 +1,18 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery } from '../../db/neon.js'
-import { getWorkifyContext } from './auth-helper.js'
+import { sql } from '../../db/neon.js'
+import { requireAuth } from '../../lib/auth.js'
+import { requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyWorkShiftsRoutes(fastify: FastifyInstance) {
-  fastify.get('/api/workify/work-shifts', async (request, reply) => {
-    const ctx = await getWorkifyContext(request, reply)
-    if (!ctx) return
+  fastify.get('/api/workify/work-shifts', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
+    const companyId = request.companyId!
 
     try {
       const rows = (await sql`
         SELECT id, name, description, "startTime", "endTime", "breakStart", "breakEnd",
           tolerance, "isActive", "isNightShift", "companyId", "createdAt", "updatedAt"
         FROM work_shifts
-        WHERE "companyId" = ${ctx.companyId}
+        WHERE "companyId" = ${companyId}
         ORDER BY name ASC
       `) as Array<Record<string, unknown>>
 

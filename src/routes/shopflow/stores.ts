@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery, sqlUnsafe } from '../../db/neon.js'
-import { getShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext } from '../../lib/auth-context.js'
 
 export type Store = {
   id: string
@@ -20,10 +21,10 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   // OWNER, ADMIN, superuser: all company stores. USER: only stores in user_stores.
   fastify.get<{ Querystring: { includeInactive?: string } }>(
     '/api/shopflow/stores',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { includeInactive } = request.query
 
         const hasFullStoreAccess =
@@ -73,10 +74,10 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/stores/by-code/:code - Get store by code (must be before :id to avoid matching "by-code")
   fastify.get<{ Params: { code: string } }>(
     '/api/shopflow/stores/by-code/:code',
+    { preHandler: [requireAuth, requireShopflowContext] },
     async (request, reply) => {
       try {
-        const ctx = await getShopflowContext(request, reply)
-        if (!ctx) return
+        const ctx = contextFromRequest(request, true)
         const { code } = request.params
         const hasFullStoreAccess =
           ctx.isSuperuser || ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
@@ -113,10 +114,9 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   )
 
   // GET /api/shopflow/stores/:id
-  fastify.get<{ Params: { id: string } }>('/api/shopflow/stores/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/shopflow/stores/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const hasFullStoreAccess =
         ctx.isSuperuser || ctx.membershipRole === 'OWNER' || ctx.membershipRole === 'ADMIN'
@@ -161,10 +161,9 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
       email?: string | null
       taxId?: string | null
     }
-  }>('/api/shopflow/stores', async (request, reply) => {
+  }>('/api/shopflow/stores', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { name, code, address, phone, email, taxId } = request.body
       const store = await sqlQuery<any>(sql`
         INSERT INTO stores ("companyId", name, code, address, phone, email, "taxId")
@@ -200,10 +199,9 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
       taxId: string | null
       active: boolean
     }>
-  }>('/api/shopflow/stores/:id', async (request, reply) => {
+  }>('/api/shopflow/stores/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
       const body = request.body
 
@@ -266,10 +264,9 @@ export async function shopflowStoresRoutes(fastify: FastifyInstance) {
   })
 
   // DELETE /api/shopflow/stores/:id
-  fastify.delete<{ Params: { id: string } }>('/api/shopflow/stores/:id', async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/api/shopflow/stores/:id', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { id } = request.params
 
       const existing = await sqlQuery<{ id: string }>(sql`

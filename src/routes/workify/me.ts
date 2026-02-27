@@ -1,27 +1,17 @@
 import { FastifyInstance } from 'fastify'
 import { sql } from '../../db/neon.js'
-import { verifyToken } from '../auth.js'
+import { requireAuth } from '../../lib/auth.js'
+import { requireWorkifyContext } from '../../lib/auth-context.js'
 
 export async function workifyMeRoutes(fastify: FastifyInstance) {
   // GET /api/workify/me - Current user with companyId and roles (Workify shape)
   fastify.get<{
     Headers: { authorization?: string }
-  }>('/api/workify/me', async (request, reply) => {
+  }>('/api/workify/me', { preHandler: [requireAuth, requireWorkifyContext] }, async (request, reply) => {
     try {
-      const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        reply.code(401)
-        return { success: false, error: 'Token de autenticación requerido' }
-      }
-
-      const token = authHeader.substring(7)
-      const decoded = verifyToken(token)
-      if (!decoded) {
-        reply.code(401)
-        return { success: false, error: 'Token inválido o expirado' }
-      }
-
+      const decoded = request.user!
       const userId = decoded.id
+      const companyId = request.companyId ?? decoded.companyId ?? null
 
       const users = (await sql`
         SELECT id, email, "firstName", "lastName", "isActive"
@@ -38,11 +28,11 @@ export async function workifyMeRoutes(fastify: FastifyInstance) {
       const user = users[0]
       const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email
 
-      // Prefer companyId and membershipRole from token (set at login)
-      let companyId: string | null = decoded.companyId ?? null
+      // Prefer companyId from context (set by requireWorkifyContext) or token
+      let resolvedCompanyId: string | null = companyId
       let roles: Array<{ role: { name: string }; companyId: string }> = []
 
-      if (!companyId) {
+      if (!resolvedCompanyId) {
         try {
           const roleRows = (await sql`
             SELECT ur."companyId", r.name as role_name
@@ -51,7 +41,7 @@ export async function workifyMeRoutes(fastify: FastifyInstance) {
             WHERE ur."userId" = ${userId}
           `) as Array<{ companyId: string; role_name: string }>
           if (roleRows.length > 0) {
-            companyId = roleRows[0].companyId
+            resolvedCompanyId = roleRows[0].companyId
             roles = roleRows.map((r) => ({
               role: { name: r.role_name },
               companyId: r.companyId,
@@ -61,14 +51,14 @@ export async function workifyMeRoutes(fastify: FastifyInstance) {
           // user_roles or roles table may not exist
         }
       } else {
-        roles = companyId ? [{ role: { name: decoded.membershipRole || 'USER' }, companyId }] : []
+        roles = resolvedCompanyId ? [{ role: { name: decoded.membershipRole || 'USER' }, companyId: resolvedCompanyId }] : []
       }
 
       let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean } | null = null
-      if (companyId) {
+      if (resolvedCompanyId) {
         const rows = (await sql`
           SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-          FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
+          FROM companies WHERE id = ${resolvedCompanyId} AND "isActive" = true LIMIT 1
         `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
         company = rows[0] ?? null
       }
@@ -77,7 +67,7 @@ export async function workifyMeRoutes(fastify: FastifyInstance) {
         id: user.id,
         email: user.email,
         name,
-        companyId: companyId ?? undefined,
+        companyId: resolvedCompanyId ?? undefined,
         membershipRole: decoded.membershipRole ?? undefined,
         isSuperuser: decoded.isSuperuser ?? false,
         company: company ?? undefined,

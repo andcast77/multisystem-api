@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { sql, sqlQuery } from '../../db/neon.js'
-import { getShopflowContext, type ShopflowContext } from './auth-helper.js'
+import { requireAuth } from '../../lib/auth.js'
+import { contextFromRequest, requireShopflowContext, type ShopflowContext } from '../../lib/auth-context.js'
 
 /** Resolve effective storeId for reports: USER = from context/fallback store, OWNER/ADMIN = from query or all. Returns null if USER without any store (caller should 403). */
 async function resolveEffectiveStoreIdForReport(
@@ -32,10 +33,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       startDate?: string
       endDate?: string
     }
-  }>('/api/shopflow/reports/stats', async (request, reply) => {
+  }>('/api/shopflow/reports/stats', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -110,10 +110,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       storeId?: string
       days?: string
     }
-  }>('/api/shopflow/reports/daily', async (request, reply) => {
+  }>('/api/shopflow/reports/daily', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -194,10 +193,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       endDate?: string
       categoryId?: string
     }
-  }>('/api/shopflow/reports/top-products', async (request, reply) => {
+  }>('/api/shopflow/reports/top-products', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -283,10 +281,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       startDate?: string
       endDate?: string
     }
-  }>('/api/shopflow/reports/payment-methods', async (request, reply) => {
+  }>('/api/shopflow/reports/payment-methods', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -353,10 +350,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/inventory - Inventory statistics (store-scoped for USER via product.storeId)
   fastify.get<{
     Querystring: { storeId?: string }
-  }>('/api/shopflow/reports/inventory', async (request, reply) => {
+  }>('/api/shopflow/reports/inventory', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -444,10 +440,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   // GET /api/shopflow/reports/today - Today's statistics (store-scoped for USER)
   fastify.get<{
     Querystring: { storeId?: string }
-  }>('/api/shopflow/reports/today', async (request, reply) => {
+  }>('/api/shopflow/reports/today', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -513,10 +508,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/reports/week - This week's statistics (store-scoped for USER)
-  fastify.get<{ Querystring: { storeId?: string } }>('/api/shopflow/reports/week', async (request, reply) => {
+  fastify.get<{ Querystring: { storeId?: string } }>('/api/shopflow/reports/week', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -586,10 +580,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
   })
 
   // GET /api/shopflow/reports/month - This month's statistics (store-scoped for USER)
-  fastify.get<{ Querystring: { storeId?: string } }>('/api/shopflow/reports/month', async (request, reply) => {
+  fastify.get<{ Querystring: { storeId?: string } }>('/api/shopflow/reports/month', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const effectiveStoreId = await resolveEffectiveStoreIdForReport(ctx, request.query.storeId)
       if (effectiveStoreId === null) {
         reply.code(403).send({
@@ -662,10 +655,9 @@ export async function shopflowReportsRoutes(fastify: FastifyInstance) {
       startDate?: string
       endDate?: string
     }
-  }>('/api/shopflow/reports/by-user/:userId', async (request, reply) => {
+  }>('/api/shopflow/reports/by-user/:userId', { preHandler: [requireAuth, requireShopflowContext] }, async (request, reply) => {
     try {
-      const ctx = await getShopflowContext(request, reply)
-      if (!ctx) return
+      const ctx = contextFromRequest(request, true)
       const { userId } = request.params
       const { startDate, endDate } = request.query
 
