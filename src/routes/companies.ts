@@ -1,8 +1,9 @@
 import { FastifyInstance } from 'fastify'
-import { sql } from '../db/neon.js'
+import { prisma } from '../db/index.js'
 import { requireAuth } from '../lib/auth.js'
 import { canAccessCompany, isOwner, canManageCompany } from '../lib/permissions.js'
 import { sendForbidden, sendNotFound, sendServerError } from '../lib/errors.js'
+import { getCompanyModules } from '../lib/modules.js'
 
 export async function companiesRoutes(fastify: FastifyInstance) {
   // GET /api/companies/:id - Get company details
@@ -17,43 +18,21 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
 
-      type CompanyRow = {
-        id: string
-        name: string
-        parentId: string | null
-        ownerUserId: string | null
-        workifyEnabled: boolean
-        shopflowEnabled: boolean
-        technicalServicesEnabled: boolean
-        isActive: boolean
-        logo: string | null
-        taxId: string | null
-        address: string | null
-        phone: string | null
-        createdAt: string
-        updatedAt: string
-        ownerEmail: string | null
-        ownerFirstName: string | null
-        ownerLastName: string | null
-      }
+      const company = await prisma.company.findUnique({
+        where: { id: companyId },
+        include: { owner: true },
+      })
 
-      const companies = (await sql`
-        SELECT 
-          c.id, c.name, c."parentId", c."ownerUserId",
-          c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled",
-          c."isActive", c.logo, c."taxId", c.address, c.phone,
-          c."createdAt", c."updatedAt",
-          u.email as "ownerEmail", u."firstName" as "ownerFirstName", u."lastName" as "ownerLastName"
-        FROM companies c
-        LEFT JOIN users u ON u.id = c."ownerUserId"
-        WHERE c.id = ${companyId}
-      `) as CompanyRow[]
-
-      if (companies.length === 0) {
+      if (!company) {
         return sendNotFound(reply, 'Empresa no encontrada')
       }
 
-      const company = companies[0]
+      const modules = await getCompanyModules(company.id)
+      const ownerName = company.owner
+        ? `${company.owner.firstName || ''} ${company.owner.lastName || ''}`.trim() ||
+          company.owner.email
+        : ''
+
       const data = {
         id: company.id,
         name: company.name,
@@ -62,15 +41,13 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         owner: company.ownerUserId
           ? {
               id: company.ownerUserId,
-              email: company.ownerEmail || '',
-              firstName: company.ownerFirstName || '',
-              lastName: company.ownerLastName || '',
-              name: `${company.ownerFirstName || ''} ${company.ownerLastName || ''}`.trim() || company.ownerEmail || '',
+              email: company.owner?.email || '',
+              firstName: company.owner?.firstName || '',
+              lastName: company.owner?.lastName || '',
+              name: ownerName,
             }
           : null,
-        workifyEnabled: company.workifyEnabled,
-        shopflowEnabled: company.shopflowEnabled,
-        technicalServicesEnabled: company.technicalServicesEnabled,
+        modules,
         isActive: company.isActive,
         logo: company.logo,
         taxId: company.taxId,
@@ -100,79 +77,50 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         return { success: false, error: 'No tienes acceso a esta empresa' }
       }
 
-      // Get member counts
-      type CountRow = { count: string }
-      const totalMembersResult = (await sql`
-        SELECT COUNT(*)::text as count
-        FROM company_members
-        WHERE "companyId" = ${companyId}
-      `) as CountRow[]
-      const totalMembers = parseInt(totalMembersResult[0]?.count || '0')
+      const [totalMembers, ownerCount, adminCount, userCount, lastMember] = await Promise.all([
+        prisma.companyMember.count({ where: { companyId } }),
+        prisma.companyMember.count({
+          where: { companyId, membershipRole: 'OWNER' },
+        }),
+        prisma.companyMember.count({
+          where: { companyId, membershipRole: 'ADMIN' },
+        }),
+        prisma.companyMember.count({
+          where: { companyId, membershipRole: 'USER' },
+        }),
+        prisma.companyMember.findFirst({
+          where: { companyId },
+          include: { user: true },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ])
 
-      const ownerCountResult = (await sql`
-        SELECT COUNT(*)::text as count
-        FROM company_members
-        WHERE "companyId" = ${companyId} AND "membershipRole" = 'OWNER'
-      `) as CountRow[]
-      const ownerCount = parseInt(ownerCountResult[0]?.count || '0')
-
-      const adminCountResult = (await sql`
-        SELECT COUNT(*)::text as count
-        FROM company_members
-        WHERE "companyId" = ${companyId} AND "membershipRole" = 'ADMIN'
-      `) as CountRow[]
-      const adminCount = parseInt(adminCountResult[0]?.count || '0')
-
-      const userCountResult = (await sql`
-        SELECT COUNT(*)::text as count
-        FROM company_members
-        WHERE "companyId" = ${companyId} AND "membershipRole" = 'USER'
-      `) as CountRow[]
-      const userCount = parseInt(userCountResult[0]?.count || '0')
-
-      // Get last member added
-      type LastMemberRow = {
-        userId: string
-        email: string
-        firstName: string
-        lastName: string
-        membershipRole: string
-        createdAt: string
-      }
-      const lastMemberResult = (await sql`
-        SELECT cm."userId", cm."membershipRole", cm."createdAt",
-               u.email, u."firstName", u."lastName"
-        FROM company_members cm
-        JOIN users u ON u.id = cm."userId"
-        WHERE cm."companyId" = ${companyId}
-        ORDER BY cm."createdAt" DESC
-        LIMIT 1
-      `) as LastMemberRow[]
-
-      const lastMember = lastMemberResult[0]
+      const lastMemberData = lastMember
         ? {
-            userId: lastMemberResult[0].userId,
-            email: lastMemberResult[0].email,
-            firstName: lastMemberResult[0].firstName,
-            lastName: lastMemberResult[0].lastName,
-            name: `${lastMemberResult[0].firstName || ''} ${lastMemberResult[0].lastName || ''}`.trim() || lastMemberResult[0].email,
-            membershipRole: lastMemberResult[0].membershipRole,
-            createdAt: lastMemberResult[0].createdAt,
+            userId: lastMember.userId,
+            email: lastMember.user.email,
+            firstName: lastMember.user.firstName,
+            lastName: lastMember.user.lastName,
+            name: `${lastMember.user.firstName || ''} ${lastMember.user.lastName || ''}`.trim() ||
+              lastMember.user.email,
+            membershipRole: lastMember.membershipRole,
+            createdAt: lastMember.createdAt,
           }
         : null
 
-      const data = {
-        totalMembers,
-        ownerCount,
-        adminCount,
-        userCount,
-        lastMember,
-      }
-
       reply.code(200)
-      return { success: true, data }
+      return {
+        success: true,
+        data: {
+          totalMembers,
+          ownerCount,
+          adminCount,
+          userCount,
+          lastMember: lastMemberData,
+        },
+      }
     } catch (error) {
-      console.error('Error fetching company stats:', error)
+      fastify.log.error(error)
       reply.code(500)
       return { success: false, error: 'Error al obtener estadísticas de la empresa' }
     }
@@ -211,7 +159,6 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         phone,
       } = request.body
 
-      // Check if trying to modify module flags - only OWNER can do this
       if (
         (workifyEnabled !== undefined ||
           shopflowEnabled !== undefined ||
@@ -225,65 +172,79 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Check if user can manage company (OWNER or ADMIN)
       if (!canManageCompany(decoded)) {
         reply.code(403)
         return { success: false, error: 'No tienes permisos para editar esta empresa' }
       }
 
-      // Build update object
-      const updates: Record<string, any> = {}
-      if (name !== undefined) updates.name = name
-      if (workifyEnabled !== undefined) updates.workifyEnabled = workifyEnabled
-      if (shopflowEnabled !== undefined) updates.shopflowEnabled = shopflowEnabled
-      if (technicalServicesEnabled !== undefined) updates.technicalServicesEnabled = technicalServicesEnabled
-      if (logo !== undefined) updates.logo = logo
-      if (taxId !== undefined) updates.taxId = taxId
-      if (address !== undefined) updates.address = address
-      if (phone !== undefined) updates.phone = phone
+      const companyUpdate: Record<string, unknown> = {}
+      if (name !== undefined) companyUpdate.name = name
+      if (logo !== undefined) companyUpdate.logo = logo
+      if (taxId !== undefined) companyUpdate.taxId = taxId
+      if (address !== undefined) companyUpdate.address = address
+      if (phone !== undefined) companyUpdate.phone = phone
 
-      if (Object.keys(updates).length === 0) {
-        reply.code(400)
-        return { success: false, error: 'No se proporcionaron campos para actualizar' }
+      if (Object.keys(companyUpdate).length > 0) {
+        await prisma.company.update({
+          where: { id: companyId },
+          data: companyUpdate,
+        })
       }
 
-      updates.updatedAt = new Date()
+      if (
+        workifyEnabled !== undefined ||
+        shopflowEnabled !== undefined ||
+        technicalServicesEnabled !== undefined
+      ) {
+        const [workifyMod, shopflowMod, techservicesMod] = await Promise.all([
+          prisma.module.findUnique({ where: { key: 'workify' } }),
+          prisma.module.findUnique({ where: { key: 'shopflow' } }),
+          prisma.module.findUnique({ where: { key: 'techservices' } }),
+        ])
 
-      // Build SQL update query dynamically
-      const setClause = Object.keys(updates)
-        .map((key, index) => `"${key}" = $${index + 2}`)
-        .join(', ')
-      const values = Object.values(updates)
+        const updates: { moduleId: string; enabled: boolean }[] = []
+        if (workifyEnabled !== undefined && workifyMod)
+          updates.push({ moduleId: workifyMod.id, enabled: workifyEnabled })
+        if (shopflowEnabled !== undefined && shopflowMod)
+          updates.push({ moduleId: shopflowMod.id, enabled: shopflowEnabled })
+        if (technicalServicesEnabled !== undefined && techservicesMod)
+          updates.push({ moduleId: techservicesMod.id, enabled: technicalServicesEnabled })
 
-      await sql.query(
-        `UPDATE companies SET ${setClause} WHERE id = $1`,
-        [companyId, ...values]
-      )
-
-      // Fetch updated company
-      type CompanyRow = {
-        id: string
-        name: string
-        workifyEnabled: boolean
-        shopflowEnabled: boolean
-        technicalServicesEnabled: boolean
-        updatedAt: string
+        for (const { moduleId, enabled } of updates) {
+          await prisma.companyModule.upsert({
+            where: {
+              companyId_moduleId: { companyId, moduleId },
+            },
+            create: { companyId, moduleId, enabled },
+            update: { enabled },
+          })
+        }
       }
-      const updated = (await sql`
-        SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled", "updatedAt"
-        FROM companies
-        WHERE id = ${companyId}
-      `) as CompanyRow[]
+
+      const updated = await prisma.company.findUnique({
+        where: { id: companyId },
+      })
+      if (!updated) {
+        return sendNotFound(reply, 'Empresa no encontrada')
+      }
+
+      const modules = await getCompanyModules(updated.id)
 
       reply.code(200)
       return {
         success: true,
-        data: updated[0],
+        data: {
+          id: updated.id,
+          name: updated.name,
+          modules,
+          updatedAt: updated.updatedAt,
+        },
         message: 'Empresa actualizada correctamente',
       }
-    } catch (error: any) {
-      console.error('Error updating company:', error)
-      if (error?.message?.includes('unique constraint')) {
+    } catch (error: unknown) {
+      fastify.log.error(error)
+      const err = error as { message?: string; code?: string }
+      if (err?.code === 'P2002' || err?.message?.includes('unique constraint')) {
         reply.code(409)
         return { success: false, error: 'Ya existe una empresa con ese nombre' }
       }
@@ -301,29 +262,25 @@ export async function companiesRoutes(fastify: FastifyInstance) {
       const decoded = request.user!
       const { id: companyId } = request.params
       if (!canAccessCompany(decoded, companyId)) {
-        reply.code(403)
-        return { success: false, error: 'No tienes acceso a esta empresa' }
+        return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
 
-      // Only OWNER can delete company
       if (!isOwner(decoded)) {
         reply.code(403)
         return { success: false, error: 'Solo el propietario puede eliminar la empresa' }
       }
 
-      // Check if company exists
-      type CompanyRow = { id: string; name: string }
-      const companies = (await sql`
-        SELECT id, name FROM companies WHERE id = ${companyId}
-      `) as CompanyRow[]
+      const company = await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { id: true, name: true },
+      })
 
-      if (companies.length === 0) {
+      if (!company) {
         reply.code(404)
         return { success: false, error: 'Empresa no encontrada' }
       }
 
-      // Delete company (cascade will handle related records)
-      await sql`DELETE FROM companies WHERE id = ${companyId}`
+      await prisma.company.delete({ where: { id: companyId } })
 
       reply.code(200)
       return {
@@ -331,7 +288,7 @@ export async function companiesRoutes(fastify: FastifyInstance) {
         message: 'Empresa eliminada correctamente',
       }
     } catch (error) {
-      console.error('Error deleting company:', error)
+      fastify.log.error(error)
       reply.code(500)
       return { success: false, error: 'Error al eliminar la empresa' }
     }

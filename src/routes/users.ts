@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery, sqlUnsafe, type User, userDisplayName } from '../db/neon.js'
+import { prisma } from '../db/index.js'
+import { userDisplayName } from '../lib/auth.js'
 import { requireAuth } from '../lib/auth.js'
 import { sendServerError } from '../lib/errors.js'
 import bcrypt from 'bcryptjs'
@@ -50,20 +51,20 @@ export async function usersRoutes(fastify: FastifyInstance) {
     }
   }, async (request, reply) => {
     try {
-      const users = await sqlQuery<User>(sql`
-        SELECT 
-          id,
-          email,
-          "firstName",
-          "lastName",
-          role,
-          "isActive",
-          "createdAt",
-          "updatedAt"
-        FROM users
-        WHERE "isActive" = true
-        ORDER BY "createdAt" DESC
-      `)
+      const users = await prisma.user.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      })
 
       return {
         success: true,
@@ -131,21 +132,20 @@ export async function usersRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
   const { id } = request.params;
   try {
-    const users = await sqlQuery<User>(sql`
-      SELECT 
-        id,
-        email,
-        "firstName",
-        "lastName",
-        role,
-        "isActive",
-        "createdAt",
-        "updatedAt"
-      FROM users
-      WHERE id = ${id}
-      LIMIT 1
-    `);
-    if (users.length === 0) {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!user) {
       reply.code(404);
       return {
         success: false,
@@ -154,7 +154,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
     }
     return {
       success: true,
-      data: { ...users[0], name: userDisplayName(users[0]) },
+      data: { ...user, name: userDisplayName(user) },
     };
   } catch (error) {
     fastify.log.error(error);
@@ -242,12 +242,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
     try {
       const { email, password, firstName, lastName, role, isActive } = request.body
 
-      // Check if user already exists
-      const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM users WHERE email = ${email} LIMIT 1
-      `)
+      const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
 
-      if (existing.length > 0) {
+      if (existing) {
         reply.code(400)
         return {
           success: false,
@@ -255,18 +252,23 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Hash password using bcrypt
       const hashedPassword = await bcrypt.hash(password, 10)
 
-      const user = await sqlQuery<User>(sql`
-        INSERT INTO users (email, password, "firstName", "lastName", role, "isActive")
-        VALUES (${email}, ${hashedPassword}, ${firstName ?? ''}, ${lastName ?? ''}, ${role || 'USER'}, ${isActive ?? true})
-        RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
-      `)
+      const user = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          firstName: firstName ?? '',
+          lastName: lastName ?? '',
+          role: (role as 'USER' | 'ADMIN' | 'SUPERADMIN') ?? 'USER',
+          isActive: isActive ?? true,
+        },
+      })
 
+      const { password: _p, ...userData } = user
       return {
         success: true,
-        data: { ...user[0], name: userDisplayName(user[0]) },
+        data: { ...userData, name: userDisplayName(user) },
       }
     } catch (error) {
       fastify.log.error(error)
@@ -368,12 +370,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const { id } = request.params
       const { email, password, firstName, lastName, role, isActive } = request.body
 
-      // Check if user exists
-      const existing = await sqlQuery<{ id: string; email: string }>(sql`
-        SELECT id, email FROM users WHERE id = ${id} LIMIT 1
-      `)
+      const existing = await prisma.user.findUnique({
+        where: { id },
+        select: { id: true, email: true },
+      })
 
-      if (existing.length === 0) {
+      if (!existing) {
         reply.code(404)
         return {
           success: false,
@@ -381,12 +383,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Check if email is already taken
-      if (email && email !== existing[0].email) {
-        const emailCheck = await sqlQuery<{ id: string }>(sql`
-          SELECT id FROM users WHERE email = ${email} LIMIT 1
-        `)
-        if (emailCheck.length > 0) {
+      if (email && email !== existing.email) {
+        const emailCheck = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+        if (emailCheck) {
           reply.code(400)
           return {
             success: false,
@@ -395,37 +394,15 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Build update query
-      const updates: string[] = []
-      const values: any[] = []
+      const updateData: Record<string, unknown> = {}
+      if (email !== undefined) updateData.email = email
+      if (password !== undefined) updateData.password = await bcrypt.hash(password, 10)
+      if (firstName !== undefined) updateData.firstName = firstName
+      if (lastName !== undefined) updateData.lastName = lastName
+      if (role !== undefined) updateData.role = role
+      if (isActive !== undefined) updateData.isActive = isActive
 
-      if (email !== undefined) {
-        updates.push(`email = $${values.length + 1}`)
-        values.push(email)
-      }
-      if (password !== undefined) {
-        const hashedPassword = await bcrypt.hash(password, 10)
-        updates.push(`password = $${values.length + 1}`)
-        values.push(hashedPassword)
-      }
-      if (firstName !== undefined) {
-        updates.push(`"firstName" = $${values.length + 1}`)
-        values.push(firstName)
-      }
-      if (lastName !== undefined) {
-        updates.push(`"lastName" = $${values.length + 1}`)
-        values.push(lastName)
-      }
-      if (role !== undefined) {
-        updates.push(`role = $${values.length + 1}`)
-        values.push(role)
-      }
-      if (isActive !== undefined) {
-        updates.push(`"isActive" = $${values.length + 1}`)
-        values.push(isActive)
-      }
-
-      if (updates.length === 0) {
+      if (Object.keys(updateData).length === 0) {
         reply.code(400)
         return {
           success: false,
@@ -433,21 +410,24 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
       }
 
-      updates.push(`"updatedAt" = NOW()`)
-      values.push(id)
-
-      const query = `
-        UPDATE users 
-        SET ${updates.join(', ')}
-        WHERE id = $${values.length}
-        RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
-      `
-
-      const updated = await sqlUnsafe<User>(query, values)
+      const updated = await prisma.user.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
 
       return {
         success: true,
-        data: updated[0] ? { ...updated[0], name: userDisplayName(updated[0]) } : updated[0],
+        data: { ...updated, name: userDisplayName(updated) },
       }
     } catch (error) {
       fastify.log.error(error)
@@ -512,29 +492,23 @@ export async function usersRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const { id } = request.params;
     try {
-      // Check if user exists
-      const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM users WHERE id = ${id} LIMIT 1
-      `);
-      if (existing.length === 0) {
+      const existing = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+      if (!existing) {
         reply.code(404);
         return {
           success: false,
           error: 'Usuario no encontrado',
         };
       }
-      // Check if user has sales
-      const salesCount = await sqlQuery<{ count: string }>(sql`
-        SELECT COUNT(*) as count FROM sales WHERE "userId" = ${id}
-      `);
-      if (parseInt(salesCount[0]?.count || '0') > 0) {
+      const salesCount = await prisma.sale.count({ where: { userId: id } });
+      if (salesCount > 0) {
         reply.code(400);
         return {
           success: false,
           error: 'No se puede eliminar un usuario que tiene ventas. Desactive el usuario en su lugar.',
         };
       }
-      await sql`DELETE FROM users WHERE id = ${id}`;
+      await prisma.user.delete({ where: { id } });
       return {
         success: true,
         data: { success: true },

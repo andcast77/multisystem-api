@@ -1,58 +1,79 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { sql } from '../db/neon.js'
+import { prisma } from '../db/index.js'
+import { getCompanyModules, type CompanyModulesShape } from './modules.js'
 
 export type CompanyRow = {
   id: string
   name: string
-  workifyEnabled: boolean
-  shopflowEnabled: boolean
-  technicalServicesEnabled: boolean
+  modules: CompanyModulesShape
   membershipRole?: string | null
 }
 
 /**
  * Get companies for a user (all active if superuser, else via company_members / user_roles).
  */
-export async function getUserCompanies(userId: string, isSuperuser: boolean): Promise<CompanyRow[]> {
+export async function getUserCompanies(
+  userId: string,
+  isSuperuser: boolean
+): Promise<CompanyRow[]> {
   if (isSuperuser) {
-    return (await sql`
-      SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-      FROM companies
-      WHERE "isActive" = true
-      ORDER BY name
-    `) as CompanyRow[]
-  }
-  let companies: CompanyRow[] = []
-  try {
-    companies = (await sql`
-      SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled", cm."membershipRole" as "membershipRole"
-      FROM company_members cm
-      JOIN companies c ON c.id = cm."companyId"
-      WHERE cm."userId" = ${userId} AND c."isActive" = true
-      ORDER BY c.name
-    `) as CompanyRow[]
-  } catch {
-    // company_members may not exist
-  }
-  if (companies.length === 0) {
-    try {
-      const ur = (await sql`
-        SELECT c.id, c.name, c."workifyEnabled", c."shopflowEnabled", c."technicalServicesEnabled"
-        FROM user_roles ur
-        JOIN companies c ON c.id = ur."companyId"
-        WHERE ur."userId" = ${userId}
-        ORDER BY c.name
-      `) as CompanyRow[]
-      companies = ur.map((r) => ({ ...r, membershipRole: undefined }))
-    } catch {
-      // user_roles may not exist
+    const companies = await prisma.company.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    })
+    const result: CompanyRow[] = []
+    for (const c of companies) {
+      result.push({
+        id: c.id,
+        name: c.name,
+        modules: await getCompanyModules(c.id),
+        membershipRole: undefined,
+      })
     }
+    return result
   }
-  return companies
+
+  const members = await prisma.companyMember.findMany({
+    where: { userId },
+    include: { company: true },
+    orderBy: { company: { name: 'asc' } },
+  })
+
+  const activeMembers = members.filter((m) => m.company.isActive)
+  if (activeMembers.length > 0) {
+    const result: CompanyRow[] = []
+    for (const m of activeMembers) {
+      result.push({
+        id: m.company.id,
+        name: m.company.name,
+        modules: await getCompanyModules(m.company.id),
+        membershipRole: m.membershipRole,
+      })
+    }
+    return result
+  }
+
+  const userRoles = await prisma.userRoleAssignment.findMany({
+    where: { userId },
+    include: { company: true },
+    orderBy: { company: { name: 'asc' } },
+  })
+
+  const activeRoles = userRoles.filter((r) => r.company.isActive)
+  const result: CompanyRow[] = []
+  for (const r of activeRoles) {
+    result.push({
+      id: r.company.id,
+      name: r.company.name,
+      modules: await getCompanyModules(r.company.id),
+      membershipRole: null,
+    })
+  }
+  return result
 }
 
 /**
- * Pick selected company from list (by preferredCompanyId or first if single).
+ * Pick selected company from list (by preferredCompanyId/shopflowPreferredCompanyId or first if single).
  */
 export function selectCompanyForUser(
   companies: CompanyRow[],
@@ -62,26 +83,14 @@ export function selectCompanyForUser(
   if (preferredCompanyId && companies.some((c) => c.id === preferredCompanyId)) {
     const row = companies.find((c) => c.id === preferredCompanyId)!
     return {
-      selectedCompany: {
-        id: row.id,
-        name: row.name,
-        workifyEnabled: row.workifyEnabled,
-        shopflowEnabled: row.shopflowEnabled,
-        technicalServicesEnabled: row.technicalServicesEnabled,
-      },
+      selectedCompany: { id: row.id, name: row.name, modules: row.modules },
       selectedMembershipRole: row.membershipRole ?? null,
     }
   }
   if (companies.length === 1) {
     const row = companies[0]
     return {
-      selectedCompany: {
-        id: row.id,
-        name: row.name,
-        workifyEnabled: row.workifyEnabled,
-        shopflowEnabled: row.shopflowEnabled,
-        technicalServicesEnabled: row.technicalServicesEnabled,
-      },
+      selectedCompany: { id: row.id, name: row.name, modules: row.modules },
       selectedMembershipRole: row.membershipRole ?? null,
     }
   }
@@ -90,7 +99,6 @@ export function selectCompanyForUser(
 
 /**
  * Tipos de contexto (para tipado en rutas que usan request.companyId, etc.).
- * El contexto se expone vía request; estos tipos documentan la forma.
  */
 export type CompanyContext = {
   userId: string
@@ -104,10 +112,8 @@ export type WorkifyContext = CompanyContext
 
 declare module 'fastify' {
   interface FastifyRequest {
-    /** Empresa resuelta (requiere requireShopflowContext o requireWorkifyContext tras requireAuth). */
     companyId?: string
     membershipRole?: string | null
-    /** Solo en rutas Shopflow (header X-Store-Id). */
     storeId?: string | null
   }
 }
@@ -120,73 +126,63 @@ function getStoreIdFromHeader(request: FastifyRequest): string | undefined {
   return undefined
 }
 
-async function resolveCompanyId(decoded: { id: string; companyId?: string; isSuperuser?: boolean }): Promise<{
-  companyId: string
-  membershipRole: string | null
-} | null> {
+async function resolveCompanyId(decoded: {
+  id: string
+  companyId?: string
+  isSuperuser?: boolean
+}): Promise<{ companyId: string; membershipRole: string | null } | null> {
   const userId = decoded.id
 
   if (decoded.isSuperuser) {
     if (decoded.companyId) {
-      const rows = (await sql`
-        SELECT id FROM companies WHERE id = ${decoded.companyId} AND "isActive" = true LIMIT 1
-      `) as Array<{ id: string }>
-      if (rows.length > 0) {
-        return { companyId: decoded.companyId, membershipRole: null }
-      }
+      const company = await prisma.company.findFirst({
+        where: { id: decoded.companyId, isActive: true },
+      })
+      if (company) return { companyId: decoded.companyId, membershipRole: null }
     }
-    const rows = (await sql`
-      SELECT id FROM companies WHERE "isActive" = true ORDER BY name LIMIT 1
-    `) as Array<{ id: string }>
-    if (rows.length > 0) return { companyId: rows[0].id, membershipRole: null }
+    const first = await prisma.company.findFirst({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    })
+    if (first) return { companyId: first.id, membershipRole: null }
     return null
   }
 
-  type Row = { id: string; membershipRole: string | null }
-  let companies: Row[] = []
+  const members = await prisma.companyMember.findMany({
+    where: { userId },
+    include: { company: true },
+    orderBy: { company: { name: 'asc' } },
+  })
 
-  try {
-    const members = (await sql`
-      SELECT c.id, cm."membershipRole" as "membershipRole"
-      FROM company_members cm
-      JOIN companies c ON c.id = cm."companyId"
-      WHERE cm."userId" = ${userId} AND c."isActive" = true
-      ORDER BY c.name
-    `) as Row[]
-    if (members.length > 0) companies = members
-  } catch {
-    // company_members may not exist
-  }
+  const activeMembers = members.filter((m) => m.company.isActive)
+  let companies: { id: string; membershipRole: string | null }[] = activeMembers.map(
+    (m) => ({ id: m.company.id, membershipRole: m.membershipRole })
+  )
 
   if (companies.length === 0) {
-    try {
-      const ur = (await sql`
-        SELECT c.id
-        FROM user_roles ur
-        JOIN companies c ON c.id = ur."companyId"
-        WHERE ur."userId" = ${userId} AND c."isActive" = true
-        ORDER BY c.name
-      `) as Array<{ id: string }>
-      companies = ur.map((r) => ({ id: r.id, membershipRole: null }))
-    } catch {
-      // user_roles may not exist
-    }
+    const userRoles = await prisma.userRoleAssignment.findMany({
+      where: { userId },
+      include: { company: true },
+      orderBy: { company: { name: 'asc' } },
+    })
+    companies = userRoles
+      .filter((r) => r.company.isActive)
+      .map((r) => ({ id: r.company.id, membershipRole: null }))
   }
 
   if (companies.length === 0) return null
 
   if (decoded.companyId && companies.some((c) => c.id === decoded.companyId)) {
     const row = companies.find((c) => c.id === decoded.companyId)!
-    return { companyId: row.id, membershipRole: row.membershipRole ?? null }
+    return { companyId: row.id, membershipRole: row.membershipRole }
   }
 
   const first = companies[0]
-  return { companyId: first.id, membershipRole: first.membershipRole ?? null }
+  return { companyId: first.id, membershipRole: first.membershipRole }
 }
 
 /**
  * PreHandler: resuelve empresa y membership (usa request.user de requireAuth).
- * Debe ir después de requireAuth. En fallo envía 401 y lanza.
  */
 export async function requireCompanyContext(
   request: FastifyRequest,
@@ -208,19 +204,58 @@ export async function requireCompanyContext(
 
 /**
  * PreHandler para rutas Shopflow: requireAuth + requireCompanyContext + X-Store-Id.
- * Orden: [requireAuth, requireShopflowContext]. Deja en request: user, companyId, membershipRole, storeId.
+ * Si viene X-Store-Id: para USER valida UserStore; para OWNER/ADMIN/superuser valida que la tienda sea de la empresa.
  */
 export async function requireShopflowContext(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
   await requireCompanyContext(request, reply)
-  request.storeId = getStoreIdFromHeader(request) ?? undefined
+
+  const rawStoreId = getStoreIdFromHeader(request)
+  if (!rawStoreId) {
+    request.storeId = undefined
+    return
+  }
+
+  const userId = request.user!.id
+  const companyId = request.companyId!
+  const membershipRole = request.membershipRole
+  const isFullAccess =
+    request.user!.isSuperuser ||
+    membershipRole === 'OWNER' ||
+    membershipRole === 'ADMIN'
+
+  const store = await prisma.store.findFirst({
+    where: { id: rawStoreId, companyId },
+  })
+
+  if (!store) {
+    reply.code(403).send({
+      success: false,
+      error: 'No tienes acceso a esta tienda',
+    })
+    throw new Error('Store access denied')
+  }
+
+  if (!isFullAccess) {
+    const userStore = await prisma.userStore.findUnique({
+      where: { userId_storeId: { userId, storeId: rawStoreId } },
+    })
+    if (!userStore) {
+      reply.code(403).send({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      })
+      throw new Error('Store access denied')
+    }
+  }
+
+  request.storeId = rawStoreId
 }
 
 /**
  * PreHandler para rutas Workify/TechServices: requireAuth + requireCompanyContext.
- * Orden: [requireAuth, requireWorkifyContext]. Deja en request: user, companyId, membershipRole.
  */
 export async function requireWorkifyContext(
   request: FastifyRequest,
@@ -229,13 +264,12 @@ export async function requireWorkifyContext(
   await requireCompanyContext(request, reply)
 }
 
-/**
- * Construye objeto de contexto desde request (tras requireAuth + requireShopflowContext o requireWorkifyContext).
- * Shopflow: pass true para incluir storeId (retorna ShopflowContext).
- */
 export function contextFromRequest(request: FastifyRequest, includeStoreId: true): ShopflowContext
 export function contextFromRequest(request: FastifyRequest, includeStoreId?: false): CompanyContext
-export function contextFromRequest(request: FastifyRequest, includeStoreId = false): CompanyContext | ShopflowContext {
+export function contextFromRequest(
+  request: FastifyRequest,
+  includeStoreId = false
+): CompanyContext | ShopflowContext {
   const base: CompanyContext = {
     userId: request.user!.id,
     companyId: request.companyId!,

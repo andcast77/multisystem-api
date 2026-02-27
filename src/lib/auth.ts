@@ -24,6 +24,19 @@ export function generateToken(payload: TokenPayload): string {
   return jwt.sign(payload, secret, { expiresIn })
 }
 
+/** Nombre para respuestas API (firstName + lastName o email) */
+export function userDisplayName(user: {
+  firstName?: string;
+  lastName?: string;
+  email: string;
+}): string {
+  if (user.firstName != null && user.lastName != null) {
+    const n = `${user.firstName} ${user.lastName}`.trim();
+    if (n) return n;
+  }
+  return user.email;
+}
+
 export function verifyToken(token: string): TokenPayload | null {
   try {
     const { secret } = getJwtConfig()

@@ -1,13 +1,13 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery } from '../db/neon.js'
-import { userDisplayName } from '../db/neon.js'
+import { prisma } from '../db/index.js'
 import { requireAuth } from '../lib/auth.js'
+import { userDisplayName } from '../lib/auth.js'
 import { canAccessCompany, canManageMembers } from '../lib/permissions.js'
 import { sendForbidden, sendServerError } from '../lib/errors.js'
 import bcrypt from 'bcryptjs'
 
 export async function companyMembersRoutes(fastify: FastifyInstance) {
-  // GET /api/companies/:companyId/members - List company members (same list for Workify and Shopflow)
+  // GET /api/companies/:companyId/members - List company members
   fastify.get<{
     Params: { companyId: string }
     Headers: { authorization?: string }
@@ -19,73 +19,48 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
         return sendForbidden(reply, 'No tienes acceso a esta empresa')
       }
 
-      type MemberRow = {
-        id: string
-        userId: string
-        email: string
-        firstName: string
-        lastName: string
-        membershipRole: string
-        createdAt: string
-      }
-      let members: MemberRow[] = []
-      try {
-        members = (await sql`
-          SELECT cm.id, cm."userId", cm."membershipRole", cm."createdAt",
-                 u.email, u."firstName", u."lastName"
-          FROM company_members cm
-          JOIN users u ON u.id = cm."userId"
-          WHERE cm."companyId" = ${companyId} AND u."isSuperuser" = false
-          ORDER BY cm."membershipRole" = 'OWNER' DESC, u."firstName", u."lastName"
-        `) as MemberRow[]
-        // For USER members, fetch storeIds from user_stores
-        for (const m of members) {
-          if (m.membershipRole === 'USER') {
-            const storeRows = (await sql`
-              SELECT us."storeId" FROM user_stores us
-              JOIN stores s ON s.id = us."storeId" AND s."companyId" = ${companyId}
-              WHERE us."userId" = ${m.userId}
-            `) as Array<{ storeId: string }>
-            ;(m as MemberRow & { storeIds?: string[] }).storeIds = storeRows.map((r) => r.storeId)
-          }
-        }
-      } catch {
-        // company_members may not exist; fallback: no members or user_roles
-        const fallback = (await sql`
-          SELECT ur.id, ur."userId", ur."companyId",
-                 u.email, u."firstName", u."lastName"
-          FROM user_roles ur
-          JOIN users u ON u.id = ur."userId"
-          WHERE ur."companyId" = ${companyId} AND u."isSuperuser" = false
-        `) as Array<{ id: string; userId: string; companyId: string; email: string; firstName: string; lastName: string }>
-        members = fallback.map((r) => ({
-          id: r.id,
-          userId: r.userId,
-          email: r.email,
-          firstName: r.firstName,
-          lastName: r.lastName,
-          membershipRole: 'USER',
-          createdAt: '',
-        }))
-      }
-
-      const data = members.map((m) => {
-        const base = {
-          id: m.id,
-          userId: m.userId,
-          email: m.email,
-          firstName: m.firstName,
-          lastName: m.lastName,
-          name: userDisplayName({ email: m.email, firstName: m.firstName, lastName: m.lastName }),
-          membershipRole: m.membershipRole,
-          createdAt: m.createdAt,
-        }
-        const withStores = m as MemberRow & { storeIds?: string[] }
-        if (withStores.storeIds) {
-          return { ...base, storeIds: withStores.storeIds }
-        }
-        return base
+      const members = await prisma.companyMember.findMany({
+        where: { companyId },
+        include: { user: true },
       })
+
+      const roleOrder = { OWNER: 0, ADMIN: 1, USER: 2 }
+      const nonSuperuser = members
+        .filter((m) => !m.user.isSuperuser)
+        .sort((a, b) => {
+          const oa = roleOrder[a.membershipRole as keyof typeof roleOrder] ?? 3
+          const ob = roleOrder[b.membershipRole as keyof typeof roleOrder] ?? 3
+          if (oa !== ob) return oa - ob
+          const na = `${a.user.firstName} ${a.user.lastName}`.trim()
+          const nb = `${b.user.firstName} ${b.user.lastName}`.trim()
+          return na.localeCompare(nb)
+        })
+
+      const data = await Promise.all(
+        nonSuperuser.map(async (m) => {
+          const base = {
+            id: m.id,
+            userId: m.userId,
+            email: m.user.email,
+            firstName: m.user.firstName,
+            lastName: m.user.lastName,
+            name: userDisplayName(m.user),
+            membershipRole: m.membershipRole,
+            createdAt: m.createdAt,
+          }
+          if (m.membershipRole === 'USER') {
+            const userStores = await prisma.userStore.findMany({
+              where: {
+                userId: m.userId,
+                store: { companyId },
+              },
+              select: { storeId: true },
+            })
+            return { ...base, storeIds: userStores.map((us) => us.storeId) }
+          }
+          return base
+        })
+      )
 
       return { success: true, data }
     } catch (error) {
@@ -93,7 +68,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /api/companies/:companyId/members - Create user and add as company member (owner/admin only)
+  // POST /api/companies/:companyId/members - Create user and add as company member
   fastify.post<{
     Params: { companyId: string }
     Headers: { authorization?: string }
@@ -126,60 +101,57 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
         return { success: false, error: 'membershipRole debe ser ADMIN o USER' }
       }
 
-      const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM users WHERE email = ${email} LIMIT 1
-      `)
-      if (existing.length > 0) {
+      const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+      if (existing) {
         reply.code(400)
         return { success: false, error: 'Ya existe un usuario con este email' }
       }
 
       const hashedPassword = await bcrypt.hash(password, 10)
 
-      const users = (await sqlQuery<{ id: string; email: string; firstName: string; lastName: string }>(sql`
-        INSERT INTO users (id, email, password, "firstName", "lastName", role, "isActive", "isSuperuser", "createdAt", "updatedAt")
-        VALUES (gen_random_uuid(), ${email}, ${hashedPassword}, ${firstName}, ${lastName}, 'USER', true, false, NOW(), NOW())
-        RETURNING id, email, "firstName", "lastName"
-      `))
-      if (users.length === 0) {
-        reply.code(500)
-        return { success: false, error: 'Error al crear usuario' }
-      }
-      const user = users[0]
+      const user = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          firstName,
+          lastName,
+          role: 'USER',
+          isActive: true,
+          isSuperuser: false,
+        },
+      })
 
-      try {
-        await sql`
-          INSERT INTO company_members (id, "userId", "companyId", "membershipRole", "createdAt", "updatedAt")
-          VALUES (gen_random_uuid(), ${user.id}, ${companyId}, ${membershipRole}, NOW(), NOW())
-        `
-      } catch (err) {
-        fastify.log.error(err)
-        reply.code(500)
-        return { success: false, error: 'Error al asignar usuario a la empresa (tabla company_members). Ejecuta migraciones.' }
-      }
+      await prisma.companyMember.create({
+        data: {
+          userId: user.id,
+          companyId,
+          membershipRole,
+        },
+      })
 
-      // For USER role: assign stores in user_stores. If storeIds empty/undefined, assign all company stores (backward compat).
       if (membershipRole === 'USER') {
         let idsToAssign: string[] = []
         if (Array.isArray(storeIds) && storeIds.length > 0) {
-          for (const sid of storeIds) {
-            const rows = await sqlQuery<{ id: string }>(sql`
-              SELECT id FROM stores WHERE id = ${sid} AND "companyId" = ${companyId} LIMIT 1
-            `)
-            if (rows.length > 0) idsToAssign.push(sid)
-          }
+          const validStores = await prisma.store.findMany({
+            where: { id: { in: storeIds }, companyId },
+            select: { id: true },
+          })
+          idsToAssign = validStores.map((s) => s.id)
         } else {
-          const allStores = await sqlQuery<{ id: string }>(sql`
-            SELECT id FROM stores WHERE "companyId" = ${companyId} AND active = true
-          `)
+          const allStores = await prisma.store.findMany({
+            where: { companyId, active: true },
+            select: { id: true },
+          })
           idsToAssign = allStores.map((s) => s.id)
         }
         for (const storeId of idsToAssign) {
-          await sql`
-            INSERT INTO user_stores (id, "userId", "storeId", "createdAt")
-            VALUES (gen_random_uuid(), ${user.id}, ${storeId}, NOW())
-            ON CONFLICT ("userId", "storeId") DO NOTHING
-          `
+          await prisma.userStore.upsert({
+            where: {
+              userId_storeId: { userId: user.id, storeId },
+            },
+            create: { userId: user.id, storeId },
+            update: {},
+          })
         }
       }
 
@@ -201,7 +173,7 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // PUT /api/companies/:companyId/members/:userId/stores - Update stores for a USER member (owner/admin only)
+  // PUT /api/companies/:companyId/members/:userId/stores - Update stores for a USER member
   fastify.put<{
     Params: { companyId: string; userId: string }
     Headers: { authorization?: string }
@@ -219,40 +191,47 @@ export async function companyMembersRoutes(fastify: FastifyInstance) {
         return sendForbidden(reply, 'Solo el owner o un admin pueden modificar locales de usuarios')
       }
 
-      const member = await sqlQuery<{ membershipRole: string }>(sql`
-        SELECT "membershipRole" FROM company_members
-        WHERE "userId" = ${userId} AND "companyId" = ${companyId} LIMIT 1
-      `)
-      if (member.length === 0) {
+      const member = await prisma.companyMember.findUnique({
+        where: { userId_companyId: { userId, companyId } },
+        select: { membershipRole: true },
+      })
+      if (!member) {
         reply.code(404)
         return { success: false, error: 'Usuario no encontrado en esta empresa' }
       }
-      if (member[0].membershipRole !== 'USER') {
+      if (member.membershipRole !== 'USER') {
         reply.code(400)
         return { success: false, error: 'Solo los usuarios con rol USER tienen locales asignados. Los owners y admins tienen acceso a todos.' }
       }
 
-      const idsToAssign: string[] = []
+      let idsToAssign: string[] = []
       if (Array.isArray(storeIds) && storeIds.length > 0) {
-        for (const sid of storeIds) {
-          const rows = await sqlQuery<{ id: string }>(sql`
-            SELECT id FROM stores WHERE id = ${sid} AND "companyId" = ${companyId} LIMIT 1
-          `)
-          if (rows.length > 0) idsToAssign.push(sid)
-        }
+        const validStores = await prisma.store.findMany({
+          where: { id: { in: storeIds }, companyId },
+          select: { id: true },
+        })
+        idsToAssign = validStores.map((s) => s.id)
       }
 
-      await sql`
-        DELETE FROM user_stores us
-        USING stores s
-        WHERE us."storeId" = s.id AND s."companyId" = ${companyId} AND us."userId" = ${userId}
-      `
+      const companyStores = await prisma.store.findMany({
+        where: { companyId },
+        select: { id: true },
+      })
+      const companyStoreIds = companyStores.map((s) => s.id)
+
+      await prisma.userStore.deleteMany({
+        where: {
+          userId,
+          storeId: { in: companyStoreIds },
+        },
+      })
+
       for (const storeId of idsToAssign) {
-        await sql`
-          INSERT INTO user_stores (id, "userId", "storeId", "createdAt")
-          VALUES (gen_random_uuid(), ${userId}, ${storeId}, NOW())
-          ON CONFLICT ("userId", "storeId") DO NOTHING
-        `
+        await prisma.userStore.upsert({
+          where: { userId_storeId: { userId, storeId } },
+          create: { userId, storeId },
+          update: {},
+        })
       }
 
       return { success: true, data: { storeIds: idsToAssign } }

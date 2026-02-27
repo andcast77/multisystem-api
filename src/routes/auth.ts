@@ -1,8 +1,9 @@
 import { FastifyInstance } from 'fastify'
-import { sql, sqlQuery, type User, userDisplayName } from '../db/neon.js'
+import { prisma } from '../db/index.js'
 import bcrypt from 'bcryptjs'
-import { generateToken, requireAuth, verifyToken, type TokenPayload } from '../lib/auth.js'
+import { generateToken, requireAuth, userDisplayName, verifyToken, type TokenPayload } from '../lib/auth.js'
 import { getUserCompanies, selectCompanyForUser, type CompanyRow } from '../lib/auth-context.js'
+import { getCompanyModules } from '../lib/modules.js'
 import { sendBadRequest, sendForbidden, sendServerError } from '../lib/errors.js'
 
 export type { TokenPayload } from '../lib/auth.js'
@@ -54,9 +55,14 @@ export async function authRoutes(fastify: FastifyInstance) {
                   properties: {
                     id: { type: 'string', example: 'uuid-empresa' },
                     name: { type: 'string', example: 'Empresa S.A.' },
-                    workifyEnabled: { type: 'boolean', example: true },
-                    shopflowEnabled: { type: 'boolean', example: false },
-                    technicalServicesEnabled: { type: 'boolean', example: true }
+                    modules: {
+                      type: 'object',
+                      properties: {
+                        workify: { type: 'boolean', example: true },
+                        shopflow: { type: 'boolean', example: false },
+                        techservices: { type: 'boolean', example: true }
+                      }
+                    }
                   }
                 },
                 companies: {
@@ -66,9 +72,14 @@ export async function authRoutes(fastify: FastifyInstance) {
                     properties: {
                       id: { type: 'string', example: 'uuid-empresa' },
                       name: { type: 'string', example: 'Empresa S.A.' },
-                      workifyEnabled: { type: 'boolean', example: true },
-                      shopflowEnabled: { type: 'boolean', example: false },
-                      technicalServicesEnabled: { type: 'boolean', example: true },
+                      modules: {
+                        type: 'object',
+                        properties: {
+                          workify: { type: 'boolean', example: true },
+                          shopflow: { type: 'boolean', example: false },
+                          techservices: { type: 'boolean', example: true }
+                        }
+                      },
                       membershipRole: { type: 'string', example: 'OWNER' }
                     }
                   }
@@ -112,30 +123,28 @@ export async function authRoutes(fastify: FastifyInstance) {
         return sendBadRequest(reply, 'Email y contraseña son requeridos')
       }
 
-      const users = (await sql`
-        SELECT 
-          id,
-          email,
-          password,
-          role,
-          "isActive",
-          "isSuperuser",
-          "firstName",
-          "lastName"
-        FROM users
-        WHERE email = ${email}
-        LIMIT 1
-      `) as Array<User & { password: string }>
+      const user = await prisma.user.findUnique({
+        where: { email },
+        select: {
+          id: true,
+          email: true,
+          password: true,
+          role: true,
+          isActive: true,
+          isSuperuser: true,
+          firstName: true,
+          lastName: true,
+          shopflowPreferredCompanyId: true,
+        },
+      })
 
-      if (users.length === 0) {
+      if (!user) {
         reply.code(401)
         return {
           success: false,
           error: 'Credenciales inválidas',
         }
       }
-
-      const user = users[0]
 
       if (!user.isActive) {
         reply.code(401)
@@ -155,7 +164,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
 
       const companies = await getUserCompanies(user.id, user.isSuperuser ?? false)
-      const selected = selectCompanyForUser(companies, bodyCompanyId)
+      const preferredCompanyId = bodyCompanyId ?? user.shopflowPreferredCompanyId ?? undefined
+      const selected = selectCompanyForUser(companies, preferredCompanyId)
       const selectedCompany = selected?.selectedCompany ?? null
       const selectedMembershipRole = selected?.selectedMembershipRole ?? null
 
@@ -175,7 +185,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         user: { id: string; email: string; name: string; role: string; isSuperuser?: boolean }
         token: string
         companyId?: string
-        company?: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }
+        company?: { id: string; name: string; modules: { workify: boolean; shopflow: boolean; techservices: boolean } }
         companies?: CompanyRow[]
       } = {
         user: {
@@ -248,7 +258,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           companyName: { type: 'string', description: 'Nombre de la empresa', example: 'Empresa S.A.' },
           workifyEnabled: { type: 'boolean', description: 'Módulo Workify habilitado', example: true },
           shopflowEnabled: { type: 'boolean', description: 'Módulo Shopflow habilitado', example: false },
-          technicalServicesEnabled: { type: 'boolean', description: 'Módulo Servicios Técnicos habilitado', example: true }
+          technicalServicesEnabled: { type: 'boolean', description: 'Módulo Tech Services habilitado', example: true }
         }
       },
       response: {
@@ -306,10 +316,8 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const existing = await sqlQuery<{ id: string }>(sql`
-        SELECT id FROM users WHERE email = ${email} LIMIT 1
-      `)
-      if (existing.length > 0) {
+      const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+      if (existing) {
         reply.code(400)
         return {
           success: false,
@@ -320,54 +328,73 @@ export async function authRoutes(fastify: FastifyInstance) {
       const hashedPassword = await bcrypt.hash(password, 10)
 
       if (companyName && companyName.trim()) {
-        // Hub: create user (owner), company with ownerUserId + modules, CompanyMember OWNER, role admin + user_role
         try {
-          const users = (await sqlQuery<User & { password?: string }>(sql`
-            INSERT INTO users (id, email, password, "firstName", "lastName", role, "isActive", "isSuperuser", "createdAt", "updatedAt")
-            VALUES (gen_random_uuid(), ${email}, ${hashedPassword}, ${firstName}, ${lastName}, 'USER', true, false, NOW(), NOW())
-            RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
-          `)) as User[]
-          if (users.length === 0) throw new Error('User insert failed')
-          const user = users[0]
+          const [workifyMod, shopflowMod, techservicesMod] = await Promise.all([
+            prisma.module.findUnique({ where: { key: 'workify' } }),
+            prisma.module.findUnique({ where: { key: 'shopflow' } }),
+            prisma.module.findUnique({ where: { key: 'techservices' } }),
+          ])
 
-          const companyRows = (await sql`
-            INSERT INTO companies (id, name, "ownerUserId", "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled", "isActive", "createdAt", "updatedAt")
-            VALUES (gen_random_uuid(), ${companyName.trim()}, ${user.id}, ${workifyEnabled}, ${shopflowEnabled}, ${technicalServicesEnabled}, true, NOW(), NOW())
-            RETURNING id
-          `) as Array<{ id: string }>
-          if (companyRows.length === 0) throw new Error('Company insert failed')
-          const companyId = companyRows[0].id
+          const user = await prisma.user.create({
+            data: {
+              email,
+              password: hashedPassword,
+              firstName,
+              lastName,
+              role: 'USER',
+              isActive: true,
+              isSuperuser: false,
+            },
+          })
 
-          await sql`
-            INSERT INTO company_members (id, "userId", "companyId", "membershipRole", "createdAt", "updatedAt")
-            VALUES (gen_random_uuid(), ${user.id}, ${companyId}, 'OWNER', NOW(), NOW())
-          `
+          const company = await prisma.company.create({
+            data: {
+              name: companyName.trim(),
+              ownerUserId: user.id,
+              isActive: true,
+            },
+          })
 
-          let roleRows = (await sql`
-            SELECT id FROM roles WHERE name = 'admin' AND "companyId" = ${companyId} LIMIT 1
-          `) as Array<{ id: string }>
-          if (roleRows.length === 0) {
-            roleRows = (await sql`
-              INSERT INTO roles (id, name, "companyId", "createdAt", "updatedAt")
-              VALUES (gen_random_uuid(), 'admin', ${companyId}, NOW(), NOW())
-              RETURNING id
-            `) as Array<{ id: string }>
+          await prisma.companyMember.create({
+            data: {
+              userId: user.id,
+              companyId: company.id,
+              membershipRole: 'OWNER',
+            },
+          })
+
+          const moduleIds: string[] = []
+          if (workifyEnabled && workifyMod) moduleIds.push(workifyMod.id)
+          if (shopflowEnabled && shopflowMod) moduleIds.push(shopflowMod.id)
+          if (technicalServicesEnabled && techservicesMod) moduleIds.push(techservicesMod.id)
+          for (const modId of moduleIds) {
+            await prisma.companyModule.create({
+              data: { companyId: company.id, moduleId: modId, enabled: true },
+            })
           }
-          const roleId = roleRows[0].id
 
-          await sql`
-            INSERT INTO user_roles (id, "userId", "roleId", "companyId", "createdAt", "updatedAt")
-            VALUES (gen_random_uuid(), ${user.id}, ${roleId}, ${companyId}, NOW(), NOW())
-          `
+          const role =
+            (await prisma.role.findFirst({ where: { name: 'admin', companyId: company.id } })) ??
+            (await prisma.role.create({ data: { name: 'admin', companyId: company.id } }))
+
+          await prisma.userRoleAssignment.create({
+            data: { userId: user.id, roleId: role.id, companyId: company.id },
+          })
 
           const token = generateToken({
             id: user.id,
             email: user.email,
             role: user.role,
-            companyId,
+            companyId: company.id,
             isSuperuser: false,
             membershipRole: 'OWNER',
           })
+
+          const modules = {
+            workify: workifyEnabled,
+            shopflow: shopflowEnabled,
+            techservices: technicalServicesEnabled,
+          }
 
           return {
             success: true,
@@ -377,10 +404,10 @@ export async function authRoutes(fastify: FastifyInstance) {
                 email: user.email,
                 name: userDisplayName(user),
                 role: user.role,
-                companyId,
+                companyId: company.id,
               },
               token,
-              company: { id: companyId, name: companyName.trim(), workifyEnabled, shopflowEnabled, technicalServicesEnabled },
+              company: { id: company.id, name: company.name, modules },
             },
           }
         } catch (err) {
@@ -394,19 +421,17 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // No company: only user (legacy; normally users are created from Hub or from Usuarios tab)
-      const users = (await sqlQuery<User>(sql`
-        INSERT INTO users (id, email, password, "firstName", "lastName", role, "isActive", "isSuperuser", "createdAt", "updatedAt")
-        VALUES (gen_random_uuid(), ${email}, ${hashedPassword}, ${firstName}, ${lastName}, 'USER', true, false, NOW(), NOW())
-        RETURNING id, email, "firstName", "lastName", role, "isActive", "createdAt", "updatedAt"
-      `)) as User[]
-
-      if (users.length === 0) {
-        reply.code(500)
-        return { success: false, error: 'Error al crear usuario' }
-      }
-
-      const user = users[0]
+      const user = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          firstName,
+          lastName,
+          role: 'USER',
+          isActive: true,
+          isSuperuser: false,
+        },
+      })
       const token = generateToken({
         id: user.id,
         email: user.email,
@@ -464,32 +489,26 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Get user from database (incl. empresa preferida Shopflow)
-      const users = (await sql`
-        SELECT 
-          id,
-          email,
-          role,
-          "isActive",
-          "firstName",
-          "lastName",
-          "createdAt",
-          "updatedAt",
-          "shopflowPreferredCompanyId"
-        FROM users
-        WHERE id = ${decoded.id}
-        LIMIT 1
-      `) as (User & { shopflowPreferredCompanyId?: string | null })[]
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          isActive: true,
+          firstName: true,
+          lastName: true,
+          shopflowPreferredCompanyId: true,
+        },
+      })
 
-      if (users.length === 0) {
+      if (!user) {
         reply.code(404)
         return {
           success: false,
           error: 'Usuario no encontrado',
         }
       }
-
-      const user = users[0]
 
       if (!user.isActive) {
         reply.code(401)
@@ -499,47 +518,44 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const row = user as Record<string, unknown>
-      let preferredCompanyId: string | null =
-        (row.shopflowPreferredCompanyId as string | null | undefined) ??
-        (row.shopflowpreferredcompanyid as string | null | undefined) ??
-        null
+      let preferredCompanyId: string | null = user.shopflowPreferredCompanyId
 
-      // Si el usuario no tiene empresa preferida, asignar una en BD antes de responder
       if (!preferredCompanyId) {
         const companies = await getUserCompanies(decoded.id, decoded.isSuperuser ?? false)
         const defaultCompanyId = companies[0]?.id ?? null
         if (defaultCompanyId) {
-          await sql`
-            UPDATE users SET "shopflowPreferredCompanyId" = ${defaultCompanyId}
-            WHERE id = ${decoded.id}
-          `
+          await prisma.user.update({
+            where: { id: decoded.id },
+            data: { shopflowPreferredCompanyId: defaultCompanyId },
+          })
           preferredCompanyId = defaultCompanyId
         }
       }
 
-      let company: { id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean } | null = null
+      let company: { id: string; name: string; modules: { workify: boolean; shopflow: boolean; techservices: boolean } } | null = null
       let responseCompanyId: string | undefined = decoded.companyId
 
       if (decoded.companyId) {
-        const rows = (await sql`
-          SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-          FROM companies WHERE id = ${decoded.companyId} AND "isActive" = true LIMIT 1
-        `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
-        company = rows[0] ?? null
+        const c = await prisma.company.findFirst({
+          where: { id: decoded.companyId, isActive: true },
+        })
+        if (c) {
+          const modules = await getCompanyModules(c.id)
+          company = { id: c.id, name: c.name, modules }
+        }
       }
 
-      // Si la respuesta quedaría sin companyId válido (token sin company, company inactiva/inexistente),
-      // usar empresa preferida (o asignar una en BD) y sincronizar en la respuesta antes de responder.
       if (!responseCompanyId || !company) {
-        const effectiveId = preferredCompanyId
+        const effectiveId = preferredCompanyId ?? undefined
         if (effectiveId) {
           responseCompanyId = effectiveId
-          const rows = (await sql`
-            SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-            FROM companies WHERE id = ${effectiveId} AND "isActive" = true LIMIT 1
-          `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
-          company = rows[0] ?? null
+          const c = await prisma.company.findFirst({
+            where: { id: effectiveId, isActive: true },
+          })
+          if (c) {
+            const modules = await getCompanyModules(c.id)
+            company = { id: c.id, name: c.name, modules }
+          }
         }
       }
 
@@ -594,15 +610,12 @@ export async function authRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Verify user still exists and is active
-      const users = (await sql`
-        SELECT id, "isActive"
-        FROM users
-        WHERE id = ${decoded.id}
-        LIMIT 1
-      `) as Array<{ id: string; isActive: boolean }>
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: { id: true, isActive: true },
+      })
 
-      if (users.length === 0 || !users[0].isActive) {
+      if (!user || !user.isActive) {
         reply.code(401)
         return {
           success: false,
@@ -689,25 +702,23 @@ export async function authRoutes(fastify: FastifyInstance) {
       let membershipRole: string | null = null
 
       if (decoded.isSuperuser) {
-        const rows = (await sql`
-          SELECT id FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
-        `) as Array<{ id: string }>
-        allowed = rows.length > 0
+        const company = await prisma.company.findFirst({
+          where: { id: companyId, isActive: true },
+        })
+        allowed = !!company
       } else {
-        try {
-          const rows = (await sql`
-            SELECT "membershipRole" FROM company_members
-            WHERE "userId" = ${decoded.id} AND "companyId" = ${companyId} LIMIT 1
-          `) as Array<{ membershipRole: string }>
-          if (rows.length > 0) {
-            allowed = true
-            membershipRole = rows[0].membershipRole
-          }
-        } catch {
-          const ur = (await sql`
-            SELECT 1 FROM user_roles WHERE "userId" = ${decoded.id} AND "companyId" = ${companyId} LIMIT 1
-          `) as Array<{ '?column?': number }>
-          allowed = ur.length > 0
+        const member = await prisma.companyMember.findUnique({
+          where: { userId_companyId: { userId: decoded.id, companyId } },
+          select: { membershipRole: true },
+        })
+        if (member) {
+          allowed = true
+          membershipRole = member.membershipRole
+        } else {
+          const ur = await prisma.userRoleAssignment.findFirst({
+            where: { userId: decoded.id, companyId },
+          })
+          allowed = !!ur
         }
       }
 
@@ -725,22 +736,24 @@ export async function authRoutes(fastify: FastifyInstance) {
         membershipRole: membershipRole ?? undefined,
       })
 
-      await sql`
-        UPDATE users SET "shopflowPreferredCompanyId" = ${companyId}
-        WHERE id = ${decoded.id}
-      `
+      await prisma.user.update({
+        where: { id: decoded.id },
+        data: { shopflowPreferredCompanyId: companyId },
+      })
 
-      const companyRows = (await sql`
-        SELECT id, name, "workifyEnabled", "shopflowEnabled", "technicalServicesEnabled"
-        FROM companies WHERE id = ${companyId} AND "isActive" = true LIMIT 1
-      `) as Array<{ id: string; name: string; workifyEnabled: boolean; shopflowEnabled: boolean; technicalServicesEnabled: boolean }>
+      const company = await prisma.company.findFirst({
+        where: { id: companyId, isActive: true },
+      })
+      const companyWithModules = company
+        ? { id: company.id, name: company.name, modules: await getCompanyModules(company.id) }
+        : null
 
       return {
         success: true,
         data: {
           token,
           companyId,
-          company: companyRows[0] ?? null,
+          company: companyWithModules,
         },
       }
     } catch (error) {
@@ -784,24 +797,32 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (decoded.id !== userId && !decoded.isSuperuser) {
         return sendForbidden(reply, 'Solo puedes crear sesión para tu propio usuario')
       }
-      const user = await sqlQuery<{ id: string; role: string }>(sql`
-        SELECT id, role FROM users WHERE id = ${userId} AND "isActive" = true LIMIT 1
-      `)
-      if (user.length === 0) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId, isActive: true },
+        select: { id: true, role: true },
+      })
+      if (!user) {
         reply.code(404)
         return { success: false, error: 'Usuario no encontrado' }
       }
-      const existing = await sqlQuery<{ id: string }>(sql`
+      const existingSessions = await prisma.$queryRaw<{ id: string }[]>`
         SELECT id FROM sessions WHERE "userId" = ${userId} LIMIT 1
-      `)
-      if (existing.length > 0 && user[0].role !== 'ADMIN' && user[0].role !== 'SUPERADMIN') {
+      `
+      if (
+        existingSessions.length > 0 &&
+        user.role !== 'ADMIN' &&
+        user.role !== 'SUPERADMIN'
+      ) {
         reply.code(409)
         return { success: false, error: 'Concurrent sessions not allowed for this role' }
       }
-      await sqlQuery(sql`
+      const expiresAtVal = expiresAt
+        ? new Date(expiresAt)
+        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      await prisma.$executeRaw`
         INSERT INTO sessions ("userId", "sessionToken", "ipAddress", "userAgent", "expiresAt")
-        VALUES (${userId}, ${sessionToken}, ${ipAddress ?? null}, ${userAgent ?? null}, ${expiresAt ? new Date(expiresAt) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)})
-      `)
+        VALUES (${userId}, ${sessionToken}, ${ipAddress ?? null}, ${userAgent ?? null}, ${expiresAtVal})
+      `
       return { success: true }
     } catch (error) {
       fastify.log.error(error)
@@ -818,9 +839,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         reply.code(400)
         return { success: false, data: { valid: false } }
       }
-      const rows = await sqlQuery<any>(sql`
+      const rows = await prisma.$queryRaw<{ id: string }[]>`
         SELECT id FROM sessions WHERE "sessionToken" = ${token} AND "expiresAt" > NOW() LIMIT 1
-      `)
+      `
       return { success: true, data: { valid: rows.length > 0 } }
     } catch (error) {
       fastify.log.error(error)
@@ -849,10 +870,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (decoded.id !== userId && !decoded.isSuperuser) {
         return sendForbidden(reply, 'Solo puedes listar tus propias sesiones')
       }
-      const rows = await sqlQuery<any>(sql`
+      const rows = await prisma.$queryRaw<any[]>`
         SELECT id, "userId", "sessionToken", "ipAddress", "userAgent", "expiresAt", "createdAt"
         FROM sessions WHERE "userId" = ${userId} AND "expiresAt" > NOW() ORDER BY "createdAt" DESC
-      `)
+      `
       return { success: true, data: rows }
     } catch (error) {
       fastify.log.error(error)
@@ -870,9 +891,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         const caller = request.user!
         const { token } = request.params
         const decodedToken = decodeURIComponent(token)
-        const existing = await sqlQuery<any>(sql`
+        const existing = await prisma.$queryRaw<{ id: string; userId: string }[]>`
           SELECT id, "userId" FROM sessions WHERE "sessionToken" = ${decodedToken} LIMIT 1
-        `)
+        `
         if (existing.length === 0) {
           reply.code(404)
           return { success: false, error: 'Session not found' }
@@ -881,7 +902,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         if (caller.id !== sessionUserId && !caller.isSuperuser) {
           return sendForbidden(reply, 'No puedes eliminar sesiones de otro usuario')
         }
-        await sqlQuery(sql`DELETE FROM sessions WHERE "sessionToken" = ${decodedToken}`)
+        await prisma.$executeRaw`DELETE FROM sessions WHERE "sessionToken" = ${decodedToken}`
         return { success: true }
       } catch (error) {
         fastify.log.error(error)
@@ -916,9 +937,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (caller.id !== userId && !caller.isSuperuser) {
         return sendForbidden(reply, 'Solo puedes terminar tus propias sesiones')
       }
-      await sqlQuery(sql`
+      await prisma.$executeRaw`
         DELETE FROM sessions WHERE "userId" = ${userId} AND "sessionToken" != ${currentSessionToken}
-      `)
+      `
       return { success: true }
     } catch (error) {
       fastify.log.error(error)
@@ -930,10 +951,10 @@ export async function authRoutes(fastify: FastifyInstance) {
   // POST /api/auth/sessions/cleanup-expired - Delete expired sessions
   fastify.post('/api/auth/sessions/cleanup-expired', async (request, reply) => {
     try {
-      const result = await sqlQuery<{ count: string }>(sql`
+      const result = await prisma.$queryRaw<{ count: string }[]>`
         WITH deleted AS (DELETE FROM sessions WHERE "expiresAt" <= NOW() RETURNING id)
-        SELECT COUNT(*) as count FROM deleted
-      `)
+        SELECT COUNT(*)::text as count FROM deleted
+      `
       const count = parseInt(result[0]?.count || '0')
       return { success: true, data: { count } }
     } catch (error) {
@@ -950,8 +971,11 @@ export async function authRoutes(fastify: FastifyInstance) {
   }>('/api/auth/users/:userId/concurrent-sessions', async (request, reply) => {
     try {
       const { userId } = request.params
-      const user = await sqlQuery<{ id: string }>(sql`SELECT id FROM users WHERE id = ${userId} LIMIT 1`)
-      if (user.length === 0) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+      })
+      if (!user) {
         reply.code(404)
         return { success: false, error: 'Usuario no encontrado' }
       }
